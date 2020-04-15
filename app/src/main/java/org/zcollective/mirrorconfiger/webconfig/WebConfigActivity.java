@@ -8,34 +8,21 @@ import androidx.appcompat.widget.Toolbar;
 import androidx.swiperefreshlayout.widget.SwipeRefreshLayout;
 
 import android.webkit.WebChromeClient;
+import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
+import android.widget.FrameLayout;
 
 import org.zcollective.mirrorconfiger.R;
 
 import java.util.Objects;
 
-public class WebConfigActivity extends AppCompatActivity {//WifiBaseActivity {
+public class WebConfigActivity extends AppCompatActivity {
 
-//    @Override
-//    protected int getSecondsTimeout() {
-//        return 10;
-//    }
-//
-//    @Override
-//    protected String getWifiSSID() {
-//        return ssid;
-//    }
-//
-//    @Override
-//    protected String getWifiPass() {
-//        return pass;
-//    }
-
-//    private String ssid;
-//    private String pass;
+    public static final String EXTRA_WEBPAGE = "webpage";
 
     private WebView configView;
+    private FrameLayout webview;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -44,22 +31,17 @@ public class WebConfigActivity extends AppCompatActivity {//WifiBaseActivity {
         Toolbar toolbar = findViewById(R.id.toolbar);
         setSupportActionBar(toolbar);
 
-//        ssid = getIntent().getStringExtra("SSID");
-//        pass = getIntent().getStringExtra("PASS");
-//        boolean hidden = getIntent().getBooleanExtra("HIDDEN", true);
-
         Objects.requireNonNull(getSupportActionBar());
         getSupportActionBar().setDisplayHomeAsUpEnabled(true);
         getSupportActionBar().setDisplayShowHomeEnabled(true);
 
-//        handleWIFI();
-
-        configView = findViewById(R.id.webview);
+//        configView = findViewById(R.id.webview);
+        webview = findViewById(R.id.webview);
 
         SwipeRefreshLayout refreshLayout = findViewById(R.id.swipeContainer);
 
+        configView = new WebView(this);
         refreshLayout.setOnRefreshListener(configView::reload);
-
         configView.setWebChromeClient(new WebChromeClient());
         configView.setWebViewClient(new WebViewClient() {
 
@@ -92,9 +74,26 @@ public class WebConfigActivity extends AppCompatActivity {//WifiBaseActivity {
 //                refreshLayout.setRefreshing(false);
 //            }
         });
-        configView.clearCache(true);
-        configView.getSettings().setJavaScriptEnabled(true);
-        configView.loadUrl("http://192.168.12.1:8080/");
+//        configView.clearCache(true);
+        configureWebView();
+//        configView.getSettings().setJavaScriptEnabled(true);
+//        configView.loadUrl("http://192.168.12.1:8080/");
+
+//        configView.loadUrl(BuildConfig.MIRROR_SETUP_PAGE);
+        configView.loadUrl(getIntent().getStringExtra(EXTRA_WEBPAGE));
+        webview.addView(configView);
+    }
+
+    private void configureWebView() {
+        WebSettings webSettings = configView.getSettings();
+        webSettings.setJavaScriptCanOpenWindowsAutomatically(false);
+        webSettings.setJavaScriptEnabled(true);
+        webSettings.setAllowContentAccess(false);
+        webSettings.setAllowFileAccess(false);
+        webSettings.setAllowFileAccessFromFileURLs(false);
+        webSettings.setAllowUniversalAccessFromFileURLs(false);
+        webSettings.setAppCacheEnabled(false);
+        webSettings.setCacheMode(WebSettings.LOAD_NO_CACHE);
     }
 
     @Override
@@ -120,8 +119,15 @@ public class WebConfigActivity extends AppCompatActivity {//WifiBaseActivity {
 
     @Override
     protected void onDestroy() {
-        if (configView != null) configView.destroy();
-        configView = null;
+//        if (configView != null) configView.destroy();
+//        configView = null;
         super.onDestroy();
+        configView.clearHistory();
+        configView.clearCache(true);
+        configView.clearSslPreferences();
+        webview.removeAllViews();
+        configView.destroy();
+        configView = null;
+        webview = null;
     }
 }

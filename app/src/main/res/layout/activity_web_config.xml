@@ -33,10 +33,14 @@
         android:layout_height="match_parent"
         app:layout_behavior="@string/appbar_scrolling_view_behavior">
 
-        <WebView
+        <FrameLayout
             android:id="@+id/webview"
             android:layout_width="match_parent"
             android:layout_height="match_parent" />
+<!--        <WebView-->
+<!--            android:id="@+id/webview"-->
+<!--            android:layout_width="match_parent"-->
+<!--            android:layout_height="match_parent" />-->
 
     </androidx.swiperefreshlayout.widget.SwipeRefreshLayout>
 

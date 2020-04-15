@@ -1,7 +1,7 @@
 apply plugin: 'com.android.application'
 
 android {
-    compileSdkVersion 28
+    compileSdkVersion 29
 
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_1_8
@@ -11,11 +11,14 @@ android {
     defaultConfig {
         applicationId "org.zcollective.mirrorconfiger"
         minSdkVersion 23
-        targetSdkVersion 28
+        targetSdkVersion 29
         versionCode 1
         versionName "1.0"
 
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+
+        buildConfigField("String", "MIRROR_SETUP_IP", "\"192.168.12.1\"")
+        buildConfigField("String", "MIRROR_SETUP_PAGE", "\"http://\" + MIRROR_SETUP_IP + \":8080/\"")
     }
 
     buildTypes {
@@ -24,7 +27,17 @@ android {
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }
     }
+    sourceSets {
+        main {
+            res {
+                srcDirs 'src/main/res', 'src/main/res/anim'
+            }
+        }
+    }
 
+    viewBinding {
+        enabled = true
+    }
 }
 
 dependencies {
@@ -33,8 +46,8 @@ dependencies {
     implementation 'androidx.appcompat:appcompat:1.1.0'
     implementation 'com.google.android.material:material:1.1.0'
     implementation 'androidx.constraintlayout:constraintlayout:1.1.3'
-    implementation 'androidx.navigation:navigation-fragment:2.2.1'
-    implementation 'androidx.navigation:navigation-ui:2.2.1'
+    implementation 'androidx.navigation:navigation-fragment:2.2.2'
+    implementation 'androidx.navigation:navigation-ui:2.2.2'
     implementation 'androidx.legacy:legacy-support-v4:1.0.0'
     testImplementation 'junit:junit:4.13'
     androidTestImplementation 'androidx.test.ext:junit:1.1.1'
@@ -42,4 +55,6 @@ dependencies {
 
     // QR-Scanner
     implementation 'com.budiyev.android:code-scanner:2.1.0'
+
+//    implementation 'org.jmdns:jmdns:3.5.5'
 }
