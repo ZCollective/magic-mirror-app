@@ -11,8 +11,9 @@ import androidx.annotation.IntDef;
 import androidx.annotation.IntRange;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
+import androidx.appcompat.app.WindowDecorActionBar;
 
-import org.zcollective.mirrorconfiger.mirrordevicelist.DeviceAdapter.MirrorDevice;
+import org.zcollective.mirrorconfiger.mirrordevicelist.MirrorDevice;
 
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
@@ -33,8 +34,11 @@ class MirrorDevicesHandler {
 
     private static final String LOG_TAG = "MirrorDevicesHandler";
 
+    // Holds the actual device info
     private final List<MirrorDevice> devices = new ArrayList<>();
-    private final List<String> deviceMapping = new ArrayList<>();
+
+    // Holds the ServiceName of the Mirror -> Guaranteed to be unique by our production setup, u
+//    private final List<String> deviceMapping = new ArrayList<>();
 
     private final DevicesChangedListener callback;
     private final HandlerThread handlerThread;
@@ -155,78 +159,131 @@ class MirrorDevicesHandler {
 
     private void removeAllItemsAndCallBack() {
         lock.lock();
-        int deviceAmount = devices.size();
-        deviceMapping.clear();
-        devices.clear();
-
-        callback.itemRangeRemoved(0, deviceAmount);
-        lock.unlock();
+        try{
+            int deviceAmount = devices.size();
+            devices.clear();
+            callback.itemRangeRemoved(0, deviceAmount);
+        } catch (Exception e) {
+            e.printStackTrace();
+        } finally {
+            lock.unlock();
+        }
     }
 
     private void ageItem(@NonNull MirrorDevice mirrorDevice) {
         lock.lock();
-        if (deviceMapping.contains(mirrorDevice.serviceInfo.getServiceName())) {
-            int index = deviceMapping.indexOf(mirrorDevice.serviceInfo.getServiceName());
-            devices.get(index).markedForRemoval.set(true);
+        try{
+            for (MirrorDevice device : devices) {
+                if (device.serviceInfo.getServiceName().equals(mirrorDevice.serviceInfo.getServiceName())){
+                    device.markedForRemoval.set(true);
+                }
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
+        } finally {
+            lock.unlock();
         }
-        lock.unlock();
+
     }
 
     private void age() {
-        Log.i(LOG_TAG, "MirrorDevicesHandler::ageElements()");
-        long start = System.currentTimeMillis();
         lock.lock();
-        List<MirrorDevice> toRemove = new ArrayList<>();
-        for (MirrorDevice device : devices) {
-            if (device.markedForRemoval.get()) {
-                toRemove.add(device);
-            } else {
-                device.markedForRemoval.set(true);
+        try{
+            Log.i(LOG_TAG, "MirrorDevicesHandler::ageElements()");
+            long start = System.currentTimeMillis();
+            for (MirrorDevice device : devices) {
+                if (device.markedForRemoval.get()) {
+                    removeItemAndCallBack(device);
+                } else {
+                    device.markedForRemoval.set(true);
+                }
             }
+            Log.i(LOG_TAG, "MirrorDevicesHandler::ageElements() finished. duration=" + (System.currentTimeMillis() - start) + "ms");
+        } catch (Exception e) {
+            e.printStackTrace();
+        } finally {
+            lock.unlock();
         }
-
-        for (MirrorDevice device : toRemove) {
-            removeItemAndCallBack(device);
-        }
-        lock.unlock();
-        Log.i(LOG_TAG, "MirrorDevicesHandler::ageElements() finished. duration=" + (System.currentTimeMillis() - start) + "ms");
     }
 
     private int add(@NonNull MirrorDevice mirrorDevice) {
-        Log.i(LOG_TAG, "MirrorDevicesHandler::add()");
         lock.lock();
-        int position = -1;
-        if (deviceMapping.contains(mirrorDevice.serviceInfo.getServiceName())) {
-            int index = deviceMapping.indexOf(mirrorDevice.serviceInfo.getServiceName());
-            devices.get(index).markedForRemoval.set(false);
-        } else {
+        try{
+            Log.i(LOG_TAG, "MirrorDevicesHandler::add()");
+            /*
+            For inserting we have two main scenarios:
+            The device already exists -> Checked by comparing getServiceName()
+            The device does not exist yet -> Search a unique visiblename
+             */
+
+            Log.d(LOG_TAG, "Currently listed devices: " + devices.toString());
+            Log.d(LOG_TAG, "Trying to insert device: " + mirrorDevice.toString());
+
+            for(MirrorDevice device : devices) {
+                if (mirrorDevice.serviceInfo.getServiceName().equals(device.serviceInfo.getServiceName())) {
+                    // Device is already listed. Removing age status and returning mirror id
+                    device.markedForRemoval.set(false);
+                    //Returning -1, because we did not actually add an item
+                    return -1;
+                }
+            }
             devices.add(mirrorDevice);
-            deviceMapping.add(mirrorDevice.serviceInfo.getServiceName());
-            position = devices.size() - 1;
+            return devices.size() -1;
+        } catch (Exception e) {
+            e.printStackTrace();
+        } finally {
+            lock.unlock();
         }
-        lock.unlock();
-        return position;
+        return -1;
     }
 
-    private int remove(@Nullable MirrorDevice device) {
-        Log.i(LOG_TAG, "MirrorDevicesHandler::remove()");
-        if (device == null) return -1;
-        if (!deviceMapping.contains(device.serviceInfo.getServiceName())) return -1;
+    private int remove(@Nullable MirrorDevice mirrorDevice) {
+        lock.lock();
+        try{
+            Log.i(LOG_TAG, "MirrorDevicesHandler::remove()");
+            if (mirrorDevice == null) return -1;
+            boolean exists = false;
 
-        int index = devices.indexOf(device);
-        if (index >= 0) {
-            devices.remove(index);
-            deviceMapping.remove(index);
+            // Initializing deviceToRemove to trick the intellij sense
+            MirrorDevice deviceToRemove = mirrorDevice;
+            int index = -1;
+            for(MirrorDevice device : devices) {
+                if (device.serviceInfo.getServiceName().equals(mirrorDevice.serviceInfo.getServiceName())) {
+                    exists = true;
+                    deviceToRemove = device;
+                    index = devices.indexOf(device);
+                    break;
+                }
+            }
+            if (!exists) return -1;
+            else {
+                devices.remove(deviceToRemove);
+                return index;
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
+        } finally {
+            lock.unlock();
         }
-
-        return index;
+        return -1;
     }
 
     MirrorDevice get(@IntRange(from = 0) int index) {
-        Log.i(LOG_TAG, "MirrorDevicesHandler::get()");
-        lock.lock();
-        MirrorDevice device = devices.get(index);
-        lock.unlock();
-        return device;
+        try {
+            lock.lock();
+            return devices.get(index);
+        } catch (Exception e) {
+            e.printStackTrace();
+        } finally {
+            lock.unlock();
+        }
+        return null;
+    }
+
+    private boolean nameExists(String name) {
+        for(MirrorDevice device : devices) {
+            if (device.visibleName.equals(name)) return true;
+        }
+        return false;
     }
 }
