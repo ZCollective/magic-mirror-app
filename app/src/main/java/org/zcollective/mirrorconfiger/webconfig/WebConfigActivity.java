@@ -15,27 +15,31 @@ import android.widget.FrameLayout;
 
 import org.zcollective.mirrorconfiger.R;
 
-import java.util.Objects;
+import timber.log.Timber;
 
 public class WebConfigActivity extends AppCompatActivity {
 
     public static final String EXTRA_WEBPAGE = "webpage";
 
+    private FrameLayout webView;
     private WebView configView;
-    private FrameLayout webview;
 
     @Override
     protected void onCreate(@Nullable Bundle savedInstanceState) {
+        Timber.i("Running WebConfigActivity::onCreate()");
+
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_web_config);
         Toolbar toolbar = findViewById(R.id.toolbar);
         setSupportActionBar(toolbar);
 
-        Objects.requireNonNull(getSupportActionBar());
-        getSupportActionBar().setDisplayHomeAsUpEnabled(true);
-        getSupportActionBar().setDisplayShowHomeEnabled(true);
+        if (getSupportActionBar() != null) {
+            Timber.d("SupportActionBar was null");
+            getSupportActionBar().setDisplayHomeAsUpEnabled(true);
+            getSupportActionBar().setDisplayShowHomeEnabled(true);
+        }
 
-        webview = findViewById(R.id.webview);
+        webView = findViewById(R.id.webview);
 
         SwipeRefreshLayout refreshLayout = findViewById(R.id.swipeContainer);
 
@@ -44,11 +48,22 @@ public class WebConfigActivity extends AppCompatActivity {
         configView.setWebChromeClient(new WebChromeClient());
         configView.setWebViewClient(new WebViewClient());
         configureWebView();
-        configView.loadUrl(getIntent().getStringExtra(EXTRA_WEBPAGE));
-        webview.addView(configView);
+
+        // Load designated web-page
+        String url = getIntent().getStringExtra(EXTRA_WEBPAGE);
+        Timber.d("Loading URL=%S", url);
+        configView.loadUrl(url);
+
+        // Make WebView visible
+        webView.addView(configView);
+
+        Timber.i("Finished WebConfigActivity::onCreate()");
     }
 
     private void configureWebView() {
+        configView.setFitsSystemWindows(true);
+        WebView.setWebContentsDebuggingEnabled(false);
+
         WebSettings webSettings = configView.getSettings();
         webSettings.setJavaScriptCanOpenWindowsAutomatically(false);
         webSettings.setJavaScriptEnabled(true);
@@ -58,12 +73,20 @@ public class WebConfigActivity extends AppCompatActivity {
         webSettings.setAllowUniversalAccessFromFileURLs(false);
         webSettings.setAppCacheEnabled(false);
         webSettings.setCacheMode(WebSettings.LOAD_NO_CACHE);
+
+        Timber.d("WebSettings:");
+        Timber.d("JavaScript can open Windows automatically: %B\n", webSettings.getJavaScriptCanOpenWindowsAutomatically());
+        Timber.d("JavaScript enabled: %B\n", webSettings.getJavaScriptEnabled());
+        Timber.d("Allow Content-Access: %B\n", webSettings.getAllowContentAccess());
+        Timber.d("Allow File-Access: %B\n", webSettings.getAllowFileAccess());
+        Timber.d("Allow File-Access from File-URLs: %B\n", webSettings.getAllowFileAccessFromFileURLs());
+        Timber.d("Allow Universal-Access from File-URLs: %B\n", webSettings.getAllowUniversalAccessFromFileURLs());
+        Timber.d("Cache-Mode: %d\n", webSettings.getCacheMode());
     }
 
     @Override
     public boolean onSupportNavigateUp() {
         configView.stopLoading();
-        finish();
         onBackPressed();
         return true;
     }
@@ -82,7 +105,13 @@ public class WebConfigActivity extends AppCompatActivity {
 
     @Override
     protected void onDestroy() {
+        Timber.i("Running WebConfigActivity::onDestroy()");
+
         if (configView != null) {
+            /*
+             * Purge everything about this web-session, so we don't get problems later-on
+             * because of cached elements
+             */
             configView.stopLoading();
             configView.clearHistory();
             configView.clearCache(true);
@@ -91,8 +120,13 @@ public class WebConfigActivity extends AppCompatActivity {
             configView = null;
         }
 
-        webview.removeAllViews();
-        webview = null;
+        if (webView != null) {
+            webView.removeAllViews();
+            webView = null;
+        }
+
+        Timber.i("Finished custom part of WebConfigActivity::onDestroy()");
+
         super.onDestroy();
     }
 }
