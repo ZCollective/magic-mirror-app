@@ -5,19 +5,27 @@ import android.net.wifi.WifiConfiguration;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
+import java.util.BitSet;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
+import java.util.regex.Pattern;
 
 import static org.zcollective.mirrorconfiger.util.wifi.parser.SchemeUtil.getParameters;
 
 /**
  * Decodes/Encodes a Wifi-Configuration obtained as a string. Legal format is:
  * <code>WIFI:T:AUTHENTICATION;S:SSID;P:PSK;H:HIDDEN;</code>
+ *
+ * Taken from:
+ * https://github.com/zxing/zxing/wiki/Barcode-Contents#wi-fi-network-config-android-ios-11
  */
 public class WifiScheme {
 
-    private static class Constants {
+    private static final String QUOTE_PATTERN = Pattern.compile("^\".+\"$").pattern();
+    private static final String HEX_PATTERN = Pattern.compile("^[\\p{XDigit}]+$").pattern();
+
+    private static final class Constants {
         private static final String WIFI_PROTOCOL_HEADER = "WIFI:";
         private static final String AUTHENTICATION = "T";
         private static final String HIDDEN = "H";
@@ -77,21 +85,21 @@ public class WifiScheme {
     }
 
     /**
-     * @return the hidden
+     * @return if SSID is hidden
      */
     public boolean isHidden() {
         return hidden;
     }
 
     /**
-     * @param value the hidden to set
+     * @param value if SSID is hidden
      */
     private void setHidden(@Nullable final String value) {
         setHidden(Boolean.parseBoolean(value));
     }
 
     /**
-     * @param hidden the hidden to set
+     * @param hidden if SSID is hidden
      */
     private void setHidden(boolean hidden) {
         this.hidden = hidden;
@@ -100,7 +108,7 @@ public class WifiScheme {
     public enum Authentication {
         WEP("WEP"),
         WPA("WPA"),
-        NOPASS("NOPASS");
+        NOPASS("nopass");
 
         private static final Map<String, Authentication> BY_LABEL = new HashMap<>(3);
 
@@ -117,14 +125,17 @@ public class WifiScheme {
         }
 
         public static Authentication lookup(@NonNull String label) {
-            if (label.trim().isEmpty()) {
+            String str = label.trim();
+
+            if (str.isEmpty()) {
                 return Authentication.NOPASS;
             } else {
-                return BY_LABEL.get(label.trim());
+                return BY_LABEL.get(str);
             }
         }
     }
 
+    // TODO: Special characters: \, ;, , and :
     public void parseSchema(String code) throws IllegalArgumentException, NullPointerException {
         if (code == null || !code.startsWith(Constants.WIFI_PROTOCOL_HEADER)) {
             throw new IllegalArgumentException("this is not a valid WIFI code: " + code);
@@ -134,24 +145,74 @@ public class WifiScheme {
         Map<String, String> parameters = getParameters(stringParams, "(?<!\\\\);");
 
         String param;
+
+        /*
+         * Network SSID. Required. Enclose in double quotes if it is an ASCII name,
+         * but could be interpreted as hex (i.e. "ABCD")
+         */
         if (parameters.containsKey(Constants.SSID) && (param = parameters.get(Constants.SSID)) != null) {
-            setSsid(unescape(param));
+            if (param.matches(HEX_PATTERN)) {
+                setSsid(hexToAscii(param));
+            } else {
+                String ssid = unescape(param);
+                if (ssid.matches(QUOTE_PATTERN)) {
+                    ssid = ssid.substring(1, ssid.length() - 1);
+                }
+                setSsid(ssid);
+            }
         } else {
             throw new IllegalArgumentException("No SSID specified!");
         }
 
+        /*
+         * Authentication type; can be WEP or WPA, or nopass for no password.
+         * Or, omit for no password.
+         * Enclose in double quotes if it is an ASCII name,
+         * but could be interpreted as hex (i.e. "ABCD")
+         */
         if (parameters.containsKey(Constants.AUTHENTICATION) && (param = parameters.get(Constants.AUTHENTICATION)) != null) {
-            setAuthentication(Authentication.lookup(param.toUpperCase()));
+            Authentication auth = Authentication.lookup(param);
+            if (auth != null) {
+                setAuthentication(auth);
+
+                /*
+                 * Password, ignored if T is nopass (in which case it may be omitted).
+                 * Enclose in double quotes if it is an ASCII name, but could be interpreted as hex
+                 * (i.e. "ABCD")
+                 */
+                switch(auth) {
+                    case WEP:
+                    case WPA:
+                        if (parameters.containsKey(Constants.PSK) && (param = parameters.get(Constants.PSK)) != null) {
+                            if (param.matches(HEX_PATTERN)) {
+                                setPsk(hexToAscii(param));
+                            } else {
+                                String psk = unescape(param);
+                                if (psk.matches(QUOTE_PATTERN)) {
+                                    String pskExtract = psk.substring(1, psk.length() - 1);
+                                    if (pskExtract.matches(HEX_PATTERN)) psk = pskExtract;
+                                }
+                                setPsk(psk);
+                            }
+                        } else {
+                            throw new IllegalArgumentException("No PSK specified!");
+                        }
+                        break;
+                    case NOPASS:
+                        setPsk(null);
+                        break;
+                }
+            } else {
+                throw new IllegalArgumentException("No AUTHENTICATION specified!");
+            }
         } else {
-            throw new IllegalArgumentException("No AUTHENTICATION specified!");
+            setAuthentication(Authentication.NOPASS);
+            setPsk(null);
         }
 
-        if (parameters.containsKey(Constants.PSK) && (param = parameters.get(Constants.PSK)) != null) {
-            setPsk(unescape(param));
-        } else {
-            throw new IllegalArgumentException("No PSK specified!");
-        }
-
+        /*
+         * Optional. True if the network SSID is hidden.
+         */
         if (parameters.containsKey(Constants.HIDDEN)) {
             setHidden(parameters.get(Constants.HIDDEN));
         }
@@ -163,21 +224,36 @@ public class WifiScheme {
     }
 
     public WifiConfiguration generateWifiConfiguration() {
+        if (this.ssid == null) {
+            throw new IllegalArgumentException("SSID has to be non-null!");
+        }
+
         WifiConfiguration wifiConfig = new WifiConfiguration();
+
         wifiConfig.SSID = String.format("\"%s\"", this.ssid);
-        wifiConfig.preSharedKey = String.format("\"%s\"", this.psk);
         wifiConfig.hiddenSSID = this.hidden;
         wifiConfig.status = WifiConfiguration.Status.ENABLED;
+
+        // Might only be required for Unit-Testing
+        // TODO: this is still weird behaviour, we might want to investigate
+        if (wifiConfig.allowedKeyManagement == null) {
+            wifiConfig.allowedKeyManagement = new BitSet();
+        }
+        if (wifiConfig.allowedAuthAlgorithms == null) {
+            wifiConfig.allowedAuthAlgorithms = new BitSet();
+        }
 
         // Taken from WifiConfiguration#setSecurityParams()
         if (this.authentication == Authentication.WEP) {
 
+            wifiConfig.preSharedKey = String.format("\"%s\"", this.psk);
             wifiConfig.allowedKeyManagement.set(WifiConfiguration.KeyMgmt.NONE);
             wifiConfig.allowedAuthAlgorithms.set(WifiConfiguration.AuthAlgorithm.OPEN);
             wifiConfig.allowedAuthAlgorithms.set(WifiConfiguration.AuthAlgorithm.SHARED);
 
         } else if (this.authentication == Authentication.WPA) {
 
+            wifiConfig.preSharedKey = String.format("\"%s\"", this.psk);
             wifiConfig.allowedKeyManagement.set(WifiConfiguration.KeyMgmt.WPA_PSK);
 
         } else {
@@ -188,29 +264,29 @@ public class WifiScheme {
         return wifiConfig;
     }
 
-    public String generateString() {
+    @NonNull
+    @Override
+    public String toString() throws IllegalArgumentException {
         StringBuilder builder = new StringBuilder(Constants.WIFI_PROTOCOL_HEADER);
 
         if (getSsid() != null) {
             builder.append(Constants.SSID).append(":").append(escape(getSsid())).append(";");
+        } else {
+            throw new IllegalArgumentException("Network SSID is required!");
         }
 
-        if (getAuthentication() != null) {
+        if (getAuthentication() == null || getPsk() == null) {
+            builder.append(Constants.AUTHENTICATION).append(":").append("nopass").append(";");
+        } else {
             builder.append(Constants.AUTHENTICATION).append(":").append(getAuthentication()).append(";");
-        }
-
-        if (getPsk() != null) {
             builder.append(Constants.PSK).append(":").append(escape(getPsk())).append(";");
         }
 
-        builder.append(Constants.HIDDEN).append(":").append(isHidden()).append(";");
-        return builder.toString();
-    }
+        if (isHidden()) {
+            builder.append(Constants.HIDDEN).append(":").append("TRUE").append(";");
+        }
 
-    @NonNull
-    @Override
-    public String toString() {
-        return generateString();
+        return builder.append(";").toString();
     }
 
     @NonNull
@@ -220,6 +296,19 @@ public class WifiScheme {
         WifiScheme wifi = new WifiScheme();
         wifi.parseSchema(wifiCode);
         return wifi;
+    }
+
+    @NonNull
+    private static String hexToAscii(@NonNull String text) throws NullPointerException {
+        Objects.requireNonNull(text);
+        StringBuilder output = new StringBuilder();
+
+        for (int i = 0; i < text.length(); i += 2) {
+            String str = text.substring(i, i + 2);
+            output.append((char) Integer.parseInt(str, 16));
+        }
+
+        return output.toString();
     }
 
     @NonNull

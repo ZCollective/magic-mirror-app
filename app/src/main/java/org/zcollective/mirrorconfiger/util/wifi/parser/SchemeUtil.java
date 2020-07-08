@@ -53,7 +53,7 @@ public class SchemeUtil {
                                       @NonNull final String paramSeparator,
                                       @NonNull final String keyValueSeparator) {
 
-        Map<String, String> result = new LinkedHashMap<String, String>();
+        Map<String, String> result = new LinkedHashMap<>();
 
         String[] parts = qrCode.split(paramSeparator);
 
