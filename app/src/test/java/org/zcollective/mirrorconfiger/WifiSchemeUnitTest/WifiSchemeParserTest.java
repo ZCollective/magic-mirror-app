@@ -129,6 +129,94 @@ public class WifiSchemeParserTest {
         WifiScheme.parse("WIFI:T:WPAS:MIRROR-NetworkP:P4S5W0RD");
     }
 
+    @Test(expected = IllegalArgumentException.class)
+    public void parse_ssid_to_long() {
+        WifiScheme.parse("WIFI:T:WPA;S:MIRROR-NetworkMIRROR-NetworkMIRRO;P:P4S5W0RD;H:TRUE;;");
+    }
+
+    @Test(expected = IllegalArgumentException.class)
+    public void parse_wpa_psk_too_short() {
+        WifiScheme.parse("WIFI:T:WPA;S:MIRROR-Network;P:P4S5;H:TRUE;;");
+    }
+
+    @Test(expected = IllegalArgumentException.class)
+    public void parse_wpa_psk_too_long() {
+        WifiScheme.parse("WIFI:T:WPA;S:MIRROR-Network;P:P4S5W0RDP4S5W0RDP4S5W0RDP4S5W0RDP4S5W0RDP4S5W0RDP4S5W0RDP4S5W0RD;H:TRUE;;");
+    }
+
+    @Test(expected = IllegalArgumentException.class)
+    public void parse_wep64_psk_too_short() {
+        WifiScheme.parse("WIFI:T:WEP;S:MIRROR-Network;P:P4S5;H:TRUE;;");
+    }
+
+    @Test
+    public void parse_wep64_psk_correct() {
+        WifiScheme scheme = WifiScheme.parse("WIFI:T:WEP;S:MIRROR-Network;P:P4S5W;H:TRUE;;");
+
+        assertThat(scheme, is(notNullValue()));
+        assertThat(scheme.getPsk(), is("P4S5W"));
+    }
+
+    @Test(expected = IllegalArgumentException.class)
+    public void parse_wep64_psk_too_long() {
+        WifiScheme.parse("WIFI:T:WEP;S:MIRROR-Network;P:P4S5W0;H:TRUE;;");
+    }
+
+    @Test(expected = IllegalArgumentException.class)
+    public void parse_wep128_psk_too_short() {
+        WifiScheme.parse("WIFI:T:WEP;S:MIRROR-Network;P:P4S5W0RDP4S5;H:TRUE;;");
+    }
+
+    @Test
+    public void parse_wep128_psk_correct() {
+        WifiScheme scheme = WifiScheme.parse("WIFI:T:WEP;S:MIRROR-Network;P:P4S5W0RDP4S5W;H:TRUE;;");
+
+        assertThat(scheme, is(notNullValue()));
+        assertThat(scheme.getPsk(), is("P4S5W0RDP4S5W"));
+    }
+
+    @Test(expected = IllegalArgumentException.class)
+    public void parse_wep128_psk_too_long() {
+        WifiScheme.parse("WIFI:T:WEP;S:MIRROR-Network;P:P4S5W0RDP4S5W0;H:TRUE;;");
+    }
+
+    @Test(expected = IllegalArgumentException.class)
+    public void parse_wep152_psk_too_short() {
+        WifiScheme.parse("WIFI:T:WEP;S:MIRROR-Network;P:P4S5W0RDP4S5W0R;H:TRUE;;");
+    }
+
+    @Test
+    public void parse_wep152_psk_correct() {
+        WifiScheme scheme = WifiScheme.parse("WIFI:T:WEP;S:MIRROR-Network;P:P4S5W0RDP4S5W0RD;H:TRUE;;");
+
+        assertThat(scheme, is(notNullValue()));
+        assertThat(scheme.getPsk(), is("P4S5W0RDP4S5W0RD"));
+    }
+
+    @Test(expected = IllegalArgumentException.class)
+    public void parse_wep152_psk_too_long() {
+        WifiScheme.parse("WIFI:T:WEP;S:MIRROR-Network;P:P4S5W0RDP4S5W0RDP;H:TRUE;;");
+    }
+
+    @Test(expected = IllegalArgumentException.class)
+    public void parse_wep256_psk_too_short() {
+        WifiScheme.parse("WIFI:T:WEP;S:MIRROR-Network;P:P4S5W0RDP4S5W0RDP4S5W0RDP4S5;H:TRUE;;");
+    }
+
+    @Test
+    public void parse_wep256_psk_correct() {
+        WifiScheme scheme = WifiScheme.parse("WIFI:T:WEP;S:MIRROR-Network;P:P4S5W0RDP4S5W0RDP4S5W0RDP4S5W;H:TRUE;;");
+
+        assertThat(scheme, is(notNullValue()));
+        assertThat(scheme.getPsk(), is("P4S5W0RDP4S5W0RDP4S5W0RDP4S5W"));
+    }
+
+    @Test(expected = IllegalArgumentException.class)
+    public void parse_wep256_psk_too_long() {
+        WifiScheme.parse("WIFI:T:WEP;S:MIRROR-Network;P:P4S5W0RDP4S5W0RDP4S5W0RDP4S5W0;H:TRUE;;");
+    }
+
+
     @Test
     public void parse_escaped_special_characters() {
         WifiScheme scheme = WifiScheme.parse("WIFI:T:WPA;S:MIRROR-Network\\;;P:P4S5W0RD;;");

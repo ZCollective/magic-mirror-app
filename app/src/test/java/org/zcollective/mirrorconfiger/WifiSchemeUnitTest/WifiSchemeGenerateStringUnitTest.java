@@ -53,7 +53,7 @@ public class WifiSchemeGenerateStringUnitTest {
 
     @Test
     public void toString_transitive_wep() {
-        WifiScheme scheme1 = WifiScheme.parse("WIFI:T:WEP;S:MIRROR-Network;P:P4S5W0RD;;");
+        WifiScheme scheme1 = WifiScheme.parse("WIFI:T:WEP;S:MIRROR-Network;P:P4S5W0RD=====;;");
         WifiScheme scheme2 = WifiScheme.parse(scheme1.toString());
 
         assertThat(scheme2.getPsk(), is(scheme1.getPsk()));
@@ -114,7 +114,7 @@ public class WifiSchemeGenerateStringUnitTest {
         String wifiString = scheme.toString();
 
         assertThat(wifiString, is(notNullValue()));
-        assertThat(wifiString, is("WIFI:S:MIRROR;;"));
+        assertThat(wifiString, is("WIFI:S:MIRROR;T:nopass;;"));
     }
 
     @Test(expected = IllegalArgumentException.class)

@@ -76,11 +76,11 @@ public class WifiSchemeGenerateWifiConfigurationTest {
 
     @Test
     public void generateWifiConfiguration_wep() {
-        WifiScheme scheme = WifiScheme.parse("WIFI:T:WEP;S:MIRROR-Network;P:P4S5W0RD;H:FALSE;;");
+        WifiScheme scheme = WifiScheme.parse("WIFI:T:WEP;S:MIRROR-Network;P:P4S5W0RD=====;H:FALSE;;");
         WifiConfiguration config = scheme.generateWifiConfiguration();
         assertThat(config, is(notNullValue()));
         assertThat(config.SSID, is("\"MIRROR-Network\""));
-        assertThat(config.preSharedKey, is("\"P4S5W0RD\""));
+        assertThat(config.preSharedKey, is("\"P4S5W0RD=====\""));
         assertThat(config.allowedKeyManagement, is(NONE));
         assertThat(config.allowedAuthAlgorithms, is(OPEN_SHARED));
         assertThat(config.hiddenSSID, is(false));
@@ -88,11 +88,11 @@ public class WifiSchemeGenerateWifiConfigurationTest {
 
     @Test
     public void generateWifiConfiguration_wep_hidden() {
-        WifiScheme scheme = WifiScheme.parse("WIFI:T:WEP;S:MIRROR-Network;P:P4S5W0RD;H:TRUE;;");
+        WifiScheme scheme = WifiScheme.parse("WIFI:T:WEP;S:MIRROR-Network;P:P4S5W0RD=====;H:TRUE;;");
         WifiConfiguration config = scheme.generateWifiConfiguration();
         assertThat(config, is(notNullValue()));
         assertThat(config.SSID, is("\"MIRROR-Network\""));
-        assertThat(config.preSharedKey, is("\"P4S5W0RD\""));
+        assertThat(config.preSharedKey, is("\"P4S5W0RD=====\""));
         assertThat(config.allowedKeyManagement, is(NONE));
         assertThat(config.allowedAuthAlgorithms, is(OPEN_SHARED));
         assertThat(config.hiddenSSID, is(true));

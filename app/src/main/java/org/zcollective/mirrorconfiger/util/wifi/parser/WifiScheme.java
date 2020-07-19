@@ -229,7 +229,7 @@ public class WifiScheme {
                             setPsk(psk);
                         } else {
                             // WEP PSK length-constraint
-                            throw new IllegalArgumentException("Illegal PSK-length: " + psk.length());
+                            throw new IllegalArgumentException("Illegal PSK-length: " + pskLength);
                         }
                     }
                 }
