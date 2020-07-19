@@ -2,25 +2,45 @@ package org.zcollective.mirrorconfiger.splashscreen;
 
 import android.app.Application;
 import android.os.Build;
-import android.util.Log;
+import android.os.StrictMode;
 
-/**
- * Created by Andreas Knipl <Andreas.Knipl@medicospeaker.com>
- */
+import org.zcollective.mirrorconfiger.BuildConfig;
+
+import timber.log.Timber;
+
 public class App extends Application {
-
-    private static final String LOG_TAG = "App";
 
     @Override
     public void onCreate() {
+        if (BuildConfig.DEBUG) {
+            Timber.plant(new Timber.DebugTree());
+
+            StrictMode.setThreadPolicy(new StrictMode.ThreadPolicy.Builder()
+                    .detectResourceMismatches()
+                    .detectCustomSlowCalls()
+                    .detectNetwork()
+//                    .detectAll()  // Disabled because Read/Write floods Samsung Devices for no reason
+                    .penaltyLog() //Logs a message to LogCat
+                    .build());
+
+            if (Build.VERSION_CODES.O <= Build.VERSION.SDK_INT) {
+                StrictMode.setThreadPolicy(new StrictMode.ThreadPolicy.Builder(StrictMode.getThreadPolicy())
+                        .detectUnbufferedIo()
+                        .build());
+            }
+
+            StrictMode.setVmPolicy(new StrictMode.VmPolicy.Builder()
+                    .detectAll()
+                    .penaltyLog()
+                    .build());
+        }
+
+        Timber.i("Running App::onCreate()");
+        Timber.d("Android-Version:\nBASE_OS: %S\nCODENAME: %S\nRELEASE: %S\nSECURITY_PATCH: %S\nSDK_INT: %d",
+                Build.VERSION.BASE_OS, Build.VERSION.CODENAME, Build.VERSION.RELEASE,
+                Build.VERSION.SECURITY_PATCH, Build.VERSION.SDK_INT
+        );
+
         super.onCreate();
-
-        Log.i(LOG_TAG, "Running App::onCreate()");
-
-        Log.d(LOG_TAG, "Android-Version:\nBASE_OS: " + Build.VERSION.BASE_OS +
-                       "\nCODENAME: " + Build.VERSION.CODENAME +
-                       "\nRELEASE: " + Build.VERSION.RELEASE +
-                       "\nSECURITY_PATCH: " + Build.VERSION.SECURITY_PATCH +
-                       "\nSDK_INT: " + Build.VERSION.SDK_INT);
     }
 }

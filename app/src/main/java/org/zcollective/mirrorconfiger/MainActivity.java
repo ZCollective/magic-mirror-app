@@ -5,18 +5,16 @@ import android.net.ConnectivityManager;
 import android.net.Network;
 import android.net.NetworkCapabilities;
 import android.net.NetworkRequest;
+import android.net.nsd.NsdManager;
 import android.net.wifi.WifiConfiguration;
 import android.net.wifi.WifiManager;
 import android.os.Bundle;
 import android.util.Log;
 import android.view.View;
-import android.view.animation.AnimationUtils;
-import android.view.animation.LayoutAnimationController;
 
 import androidx.annotation.NonNull;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.appcompat.widget.Toolbar;
-import androidx.recyclerview.widget.DividerItemDecoration;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
@@ -25,9 +23,7 @@ import com.google.android.material.snackbar.Snackbar;
 
 import org.zcollective.mirrorconfiger.mirrordevicelist.DeviceAdapter;
 import org.zcollective.mirrorconfiger.qrscanner.QrScannerActivity;
-import org.zcollective.mirrorconfiger.util.mirrordiscovery.MirrorDiscoveryHelper;
-import org.zcollective.mirrorconfiger.util.mirrordiscovery.NsdManager;
-import org.zcollective.mirrorconfiger.util.wifi.WifiStateTracker;
+import org.zcollective.mirrorconfiger.util.mirrordiscovery.NsdDiscoveryListener;
 import org.zcollective.mirrorconfiger.util.wifi.WifiStateTrackerPreOreo;
 
 import java.util.concurrent.Executors;
@@ -40,9 +36,10 @@ public class MainActivity extends AppCompatActivity implements DeviceAdapter.OnD
 
     private final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(1);
 
-    private MirrorDiscoveryHelper headlessDiscoveryHelper;
+    //private MirrorDiscoveryListener headlessDiscoveryHelper;
 //    private WifiStateTracker headlessWifiStateTracker;
     private DeviceAdapter deviceAdapter;
+    private NsdDiscoveryListener discoveryListener;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -65,8 +62,12 @@ public class MainActivity extends AppCompatActivity implements DeviceAdapter.OnD
         initializeWifiStateTracker();
 
         // Scheduling NSD-Discovery to change state every 5 seconds
-        scheduler.scheduleAtFixedRate(new NsdManager(headlessDiscoveryHelper), 0, 5,
-                TimeUnit.SECONDS);
+        scheduler.scheduleWithFixedDelay(new Runnable() {
+            @Override
+            public void run() {
+                discoveryListener.toggleDiscovery();
+            }
+        }, 10, 10, TimeUnit.SECONDS);
 
         // TODO: we should scan for 5 seconds every 10 seconds periodically
         // TODO: check wifi state!
@@ -100,8 +101,9 @@ public class MainActivity extends AppCompatActivity implements DeviceAdapter.OnD
                 connMgr.bindProcessToNetwork(network);
 
                 wifiNetwork = network;
-                headlessDiscoveryHelper.startDiscovery();
 
+                //Re-start discovery after network loss
+                discoveryListener.startDiscovery();
 //                    // Pinging webserver-host, so routing-table is filled with correct host
 //                    try {
 ////                            InetAddress ping = network.getByName("http://192.168.12.1:8080/");
@@ -137,7 +139,7 @@ public class MainActivity extends AppCompatActivity implements DeviceAdapter.OnD
             public void onLost(@NonNull Network network) {
                 Log.i(LOG_TAG, "NetworkCallback::onLost");
                 wifiNetwork = null;
-                headlessDiscoveryHelper.pauseDiscovery();
+                discoveryListener.stopDiscovery();
                 deviceAdapter.clearAll();
             }
         };
@@ -178,27 +180,26 @@ public class MainActivity extends AppCompatActivity implements DeviceAdapter.OnD
 
 
     private void initializeMirrorDiscoveryHelper() {
-        headlessDiscoveryHelper =
-                (MirrorDiscoveryHelper) getSupportFragmentManager().findFragmentByTag(MirrorDiscoveryHelper.TAG);
+        discoveryListener = (NsdDiscoveryListener) getSupportFragmentManager().findFragmentByTag(NsdDiscoveryListener.TAG);
 
-        if (headlessDiscoveryHelper == null) {
-            headlessDiscoveryHelper = new MirrorDiscoveryHelper(deviceAdapter);
+        if (discoveryListener == null) {
+            discoveryListener = new NsdDiscoveryListener(deviceAdapter);
             getSupportFragmentManager().beginTransaction()
-                                       .add(headlessDiscoveryHelper, MirrorDiscoveryHelper.TAG)
+                                       .add(discoveryListener, NsdDiscoveryListener.TAG)
                                        .commit();
         }
     }
 
     private void initializeRecyclerView() {
         deviceAdapter = new DeviceAdapter(this);
-        LayoutAnimationController animation =
-                AnimationUtils.loadLayoutAnimation(this, R.anim.layout_animation_from_bottom);
+//        LayoutAnimationController animation =
+//                AnimationUtils.loadLayoutAnimation(this, R.anim.layout_animation_from_bottom);
         RecyclerView rView = findViewById(R.id.devices_list_view);
         rView.setHasFixedSize(false);
         rView.setLayoutManager(new LinearLayoutManager(this));
         rView.setAdapter(deviceAdapter);
 //        rView.addItemDecoration(new DividerItemDecoration(this, DividerItemDecoration.VERTICAL));
-        rView.setLayoutAnimation(animation);
+//        rView.setLayoutAnimation(animation);
         // TODO: custom animation
     }
 
@@ -206,19 +207,19 @@ public class MainActivity extends AppCompatActivity implements DeviceAdapter.OnD
     protected void onDestroy() {
         Log.i(LOG_TAG, "MainActivity::onDestroy()");
         // Making sure we clean references on destroy
-        headlessDiscoveryHelper.stopDiscovery();
-        headlessDiscoveryHelper = null;
+        discoveryListener.stopDiscovery();
+        discoveryListener = null;
 //        headlessWifiStateTracker.destroy();
 //        headlessWifiStateTracker = null;
         deviceAdapter = null;
-        connMgr.unregisterNetworkCallback(ncManager);
+//        connMgr.unregisterNetworkCallback(ncManager);
         super.onDestroy();
     }
 
     @Override
     protected void onPause() {
         Log.i(LOG_TAG, "MainActivity::onPause()");
-        headlessDiscoveryHelper.pauseDiscovery();
+        discoveryListener.stopDiscovery();
         connMgr.unregisterNetworkCallback(ncManager);
         super.onPause();
         // TODO: pause scheduler!
@@ -228,7 +229,7 @@ public class MainActivity extends AppCompatActivity implements DeviceAdapter.OnD
     protected void onResume() {
         super.onResume();
         Log.i(LOG_TAG, "MainActivity::onResume()");
-        headlessDiscoveryHelper.startDiscovery();
+        discoveryListener.startDiscovery();
         connMgr.requestNetwork(buildNetworkRequest(), ncManager);
     }
 

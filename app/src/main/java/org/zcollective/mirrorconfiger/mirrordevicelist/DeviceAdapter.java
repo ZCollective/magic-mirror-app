@@ -10,28 +10,36 @@ import android.util.Log;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
-import android.widget.TextView;
 
 import androidx.annotation.NonNull;
-import androidx.annotation.Nullable;
 import androidx.recyclerview.widget.RecyclerView;
 
 import org.zcollective.mirrorconfiger.R;
-import org.zcollective.mirrorconfiger.util.mirrordiscovery.MirrorDiscoveryHelper;
-import org.zcollective.mirrorconfiger.webconfig.WebConfigActivity;
+import org.zcollective.mirrorconfiger.util.mirrordiscovery.MirrorDiscoveryInterfaces;
 
 import java.net.ConnectException;
 import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.net.SocketTimeoutException;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
-public class DeviceAdapter extends RecyclerView.Adapter<DeviceAdapter.DeviceLineViewHolder> implements MirrorDevicesHandler.DevicesChangedListener, MirrorDiscoveryHelper.MirrorResolveCallback {
+public class DeviceAdapter extends RecyclerView.Adapter<DeviceLineViewHolder> implements MirrorDevicesHandler.DevicesChangedListener, MirrorDiscoveryInterfaces.MirrorResolveCallback {
 
-    // TODO: what to do if url changed!
-    // https://stackoverflow.com/questions/36956643/partial-update-of-recyclerview-viewholder/36957892
+    /*
+     * ----------------------------------------------------------------------------------------------
+     *  Declaring public Interface
+     * ----------------------------------------------------------------------------------------------
+     */
+    public interface OnDeviceTransitionCallback {
+        void startActivity(Intent intent);
+    }
 
+
+    /*
+     * ----------------------------------------------------------------------------------------------
+     *  Declaring constants
+     * ----------------------------------------------------------------------------------------------
+     */
     private static final String LOG_TAG = "DeviceAdapter";
 
     private final MirrorDevicesHandler devices;
@@ -40,42 +48,30 @@ public class DeviceAdapter extends RecyclerView.Adapter<DeviceAdapter.DeviceLine
     // Remove and Add can occur at the same time
     private final AtomicInteger size;
 
+    /*
+     * ----------------------------------------------------------------------------------------------
+     *  Declaring constructor
+     * ----------------------------------------------------------------------------------------------
+     */
     public DeviceAdapter(@NonNull OnDeviceTransitionCallback callback) {
         this.callback = callback;
         this.devices = new MirrorDevicesHandler(this);
         this.size = new AtomicInteger(0);
     }
 
-//    private MirrorDevices devices = new MirrorDevices(this);
 
-
-//    public AdapterView.OnItemClickListener listener = (parent, view, position, id) -> {
-//        MirrorDevice mirror = devices.get(position);
-//
-//        if (mirror == null) return;
-//
-//        Intent intent = new Intent(parent.getContext(), WebConfigActivity.class);
-//        intent.putExtra(WebConfigActivity.EXTRA_WEBPAGE, getWebServer(mirror));
-//        DeviceAdapter.this.callback.startActivity(intent);
-//    };
-
-//    @Override
-//    public void onBindViewHolder(@NonNull DeviceLineViewHolder holder, int position) {
-//        holder.itemView.setOnClickListener(view -> {
-//            if (holder.mirrorUrl == null) return;
-//
-//            Intent intent = new Intent(view.getContext(), WebConfigActivity.class);
-//            intent.putExtra(WebConfigActivity.EXTRA_WEBPAGE, holder.mirrorUrl);
-//            DeviceAdapter.this.callback.startActivity(intent);
-//        });
-//    }
+    /*
+     * ----------------------------------------------------------------------------------------------
+     *  Methods derived from RecyclerView.Adapter
+     * ----------------------------------------------------------------------------------------------
+     */
 
     @NonNull
     @Override
     public DeviceLineViewHolder onCreateViewHolder(@NonNull ViewGroup parent, int viewType) {
         View view = LayoutInflater.from(parent.getContext())
-                                  .inflate(R.layout.recycler_device_row, parent, false);
-        return new DeviceLineViewHolder(view);
+                .inflate(R.layout.recycler_device_row, parent, false);
+        return new DeviceLineViewHolder(view, callback);
     }
 
     @Override
@@ -86,11 +82,111 @@ public class DeviceAdapter extends RecyclerView.Adapter<DeviceAdapter.DeviceLine
 
     @Override
     public int getItemCount() {
-//        return devices.size();
-//        return size;
         return size.get();
     }
 
+    /*
+    * ----------------------------------------------------------------------------------------------
+    *  Methods derived from DevicesChangedListener
+    * ----------------------------------------------------------------------------------------------
+     */
+
+    @Override
+    public void itemRangeRemoved(int position, int amount) {
+        Log.i(LOG_TAG, "::itemRangeRemoved(position=" + position + ", amount=" + amount + ")");
+        size.set(0);
+        runOnUiThread(() -> notifyItemRangeRemoved(position, amount));
+    }
+
+    @Override
+    public void itemRemoved(int position) {
+        Log.i(LOG_TAG, "::itemRemoved(position=" + position + ")");
+        size.getAndDecrement();
+        runOnUiThread(() -> notifyItemRemoved(position));
+    }
+
+    @Override
+    public void itemAdded(int position) {
+        Log.i(LOG_TAG, "::itemAdded(position=" + position + ")");
+        size.getAndIncrement();
+        runOnUiThread(() -> notifyItemInserted(position));
+    }
+
+
+    /*
+     * ----------------------------------------------------------------------------------------------
+     *  Methods derived from DevicesChangedListener
+     * ----------------------------------------------------------------------------------------------
+     */
+
+    @Override
+    public void onMirrorResolved(@NonNull NsdServiceInfo serviceInfo) {
+        Log.i(LOG_TAG, "::onMirrorResolved(service=" + serviceInfo.toString() + ")");
+        AsyncTask.THREAD_POOL_EXECUTOR.execute(() -> {
+            Log.i(LOG_TAG, "Trying to ping Host " + serviceInfo.getHost() + ":" + serviceInfo.getPort() + " for 5 seconds");
+            boolean open = isPortOpen(serviceInfo.getHost().getHostAddress(), serviceInfo.getPort());
+            Log.i(LOG_TAG, "Port is " + (open ? "" : "not ") + "open for service: { " + serviceInfo.toString() + " }");
+
+            // TODO: if wifi was disabled all elements should immediately be inactive -> they will be regarded as "lost services", so nvmd
+
+            try {
+                MirrorDevice device = new MirrorDevice(serviceInfo);
+                if (open) {
+                    devices.addElement(device);
+                } else {
+                    devices.ageElement(device);
+                }
+            } catch (RemoteException e) {
+                e.printStackTrace();
+            }
+        });
+    }
+
+    @Override
+    public void onMirrorResolveFailed(@NonNull NsdServiceInfo serviceInfo, int errorCode) {
+        Log.wtf(LOG_TAG, "Mirror resolve failed: error=" + errorCode + " Service: " + serviceInfo.toString());
+        try {
+            devices.ageElement(new MirrorDevice(serviceInfo));
+        } catch (RemoteException e) {
+            e.printStackTrace();
+        }
+    }
+
+    @Override
+    public void onMirrorLost(@NonNull NsdServiceInfo serviceInfo) {
+        Log.i(LOG_TAG, "Mirror lost: " + serviceInfo.toString());
+        try {
+            devices.removeElement(new MirrorDevice(serviceInfo));
+        } catch (RemoteException e) {
+            e.printStackTrace();
+        }
+    }
+
+    @Override
+    public void onDiscoveryStarted() {
+        Log.i(LOG_TAG, "DeviceAdapter::onDiscoveryStarted()");
+        // Not used right now. Might be useful later for loading icons maybe?
+    }
+
+    @Override
+    public void onDiscoveryStopped() {
+        Log.i(LOG_TAG, "::onDiscoveryStopped()");
+        try {
+            devices.ageElements();
+        } catch (RemoteException e) {
+            e.printStackTrace();
+        }
+    }
+
+
+    /*
+     * ----------------------------------------------------------------------------------------------
+     *  Common methods used multiple times
+     * ----------------------------------------------------------------------------------------------
+     */
+    private static boolean runOnUiThread(@NonNull Runnable r) {
+        return new Handler(Looper.getMainLooper()).post(r);
+    }
 
     private static boolean isPortOpen(final String ip, final int port) {
         Log.i(LOG_TAG, "Trying to connect to server: ip=" + ip + " port=" + port);
@@ -109,70 +205,6 @@ public class DeviceAdapter extends RecyclerView.Adapter<DeviceAdapter.DeviceLine
         return reachable;
     }
 
-    @Override
-    public void onMirrorResolved(@NonNull NsdServiceInfo serviceInfo) {
-        Log.i(LOG_TAG, "DeviceAdapter::onMirrorResolved()");
-
-        AsyncTask.THREAD_POOL_EXECUTOR.execute(() -> {
-            Log.i(LOG_TAG, "Starting to resolve service: { " + serviceInfo.toString() + " }");
-            boolean open = isPortOpen(serviceInfo.getHost().getHostAddress(), serviceInfo.getPort());
-            Log.i(LOG_TAG, "Port is " + (open ? "" : "not ") + "open for service: { " + serviceInfo.toString() + " }");
-
-            // TODO: if wifi was disabled all elements should immediately be inactive -> they will be regarded as "lost services", so nvmd
-
-            try {
-                MirrorDevice device = new MirrorDevice(serviceInfo);
-
-                if (open) {
-                    devices.addElement(device);
-                } else {
-                    devices.ageElement(device);
-                }
-            } catch (RemoteException e) {
-                e.printStackTrace();
-            }
-        });
-    }
-
-    @Override
-    public void onMirrorResolveFailed(@NonNull NsdServiceInfo serviceInfo, int errorCode) {
-        Log.wtf(LOG_TAG, "Mirror resolve failed: error=" + errorCode);
-
-        try {
-            devices.ageElement(new MirrorDevice(serviceInfo));
-        } catch (RemoteException e) {
-            e.printStackTrace();
-        }
-    }
-
-    @Override
-    public void onMirrorLost(@NonNull NsdServiceInfo serviceInfo) {
-        Log.wtf(LOG_TAG, "Mirror lost");
-
-        try {
-            devices.removeElement(new MirrorDevice(serviceInfo));
-        } catch (RemoteException e) {
-            e.printStackTrace();
-        }
-    }
-
-    @Override
-    public void onDiscoveryStarted() {
-        Log.i(LOG_TAG, "DeviceAdapter::onDiscoveryStarted()");
-
-    }
-
-    @Override
-    public void onDiscoveryStopped() {
-        Log.i(LOG_TAG, "DeviceAdapter::onDiscoveryStopped()");
-
-        try {
-            devices.ageElements();
-        } catch (RemoteException e) {
-            e.printStackTrace();
-        }
-    }
-
     public void clearAll() {
         try {
             devices.clear();
@@ -181,76 +213,4 @@ public class DeviceAdapter extends RecyclerView.Adapter<DeviceAdapter.DeviceLine
         }
     }
 
-    private static boolean runOnUiThread(@NonNull Runnable r) {
-        return new Handler(Looper.getMainLooper()).post(r);
-    }
-
-    @Override
-    public void itemRangeRemoved(int position, int amount) {
-        Log.i(LOG_TAG, "DeviceAdapter::itemRangeRemoved(position=" + position + ", amount=" + amount + ")");
-        size.set(0);
-        runOnUiThread(() -> notifyItemRangeRemoved(position, amount));
-    }
-
-    @Override
-    public void itemRemoved(int position) {
-        Log.i(LOG_TAG, "DeviceAdapter::itemRemoved(position=" + position + ")");
-        size.getAndDecrement();
-        runOnUiThread(() -> notifyItemRemoved(position));
-    }
-
-    @Override
-    public void itemAdded(int position) {
-        Log.i(LOG_TAG, "DeviceAdapter::itemAdded(position=" + position + ")");
-        size.getAndIncrement();
-        runOnUiThread(() -> notifyItemInserted(position));
-    }
-
-    static class MirrorDevice {
-        final NsdServiceInfo serviceInfo;
-        final AtomicBoolean markedForRemoval;
-
-        MirrorDevice(@NonNull NsdServiceInfo info) {
-            this.serviceInfo = info;
-            this.markedForRemoval = new AtomicBoolean(false);
-        }
-    }
-
-    class DeviceLineViewHolder extends RecyclerView.ViewHolder {
-
-        private final TextView name;
-        private final TextView url;
-        private String mirrorUrl;
-
-        DeviceLineViewHolder(@NonNull View view) {
-            super(view);
-            name = view.findViewById(R.id.rec_device_name);
-            url = view.findViewById(R.id.rec_device_url);
-
-            view.setOnClickListener(v -> {
-                Log.i(LOG_TAG, "OnClick!");
-                if (mirrorUrl != null) {
-                    Intent intent = new Intent(itemView.getContext(), WebConfigActivity.class);
-                    intent.putExtra(WebConfigActivity.EXTRA_WEBPAGE, mirrorUrl);
-                    DeviceAdapter.this.callback.startActivity(intent);
-                }
-            });
-        }
-
-        void updateDevice(@Nullable MirrorDevice device) {
-            if (device != null) {
-                mirrorUrl = getWebServer(device);
-                name.setText(device.serviceInfo.getServiceName());
-                url.setText(mirrorUrl);
-            }
-        }
-    }
-
-    private static String getWebServer(@NonNull MirrorDevice device) {
-        return "http://" + device.serviceInfo.getHost().getHostAddress() + ":" + device.serviceInfo.getPort();
-    }
-
-    public interface OnDeviceTransitionCallback {
-        void startActivity(Intent intent);
-    }
 }
