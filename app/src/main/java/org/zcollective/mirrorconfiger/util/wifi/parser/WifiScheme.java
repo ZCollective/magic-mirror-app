@@ -136,12 +136,18 @@ public class WifiScheme {
     }
 
     // TODO: Special characters: \, ;, , and :
+    // TODO: maybe do this in constant time, for now we might be vulnerable to side-channel-attacks
     public void parseSchema(String code) throws IllegalArgumentException, NullPointerException {
         if (code == null || !code.startsWith(Constants.WIFI_PROTOCOL_HEADER)) {
             throw new IllegalArgumentException("this is not a valid WIFI code: " + code);
         }
 
-        String stringParams = code.substring(Constants.WIFI_PROTOCOL_HEADER.length());
+        int lastDelimiter = code.lastIndexOf(';');
+        if (lastDelimiter <= Constants.WIFI_PROTOCOL_HEADER.length()) {
+            throw new IllegalArgumentException("this is not a valid WIFI code: " + code);
+        }
+
+        String stringParams = code.substring(Constants.WIFI_PROTOCOL_HEADER.length(), lastDelimiter);
         Map<String, String> parameters = getParameters(stringParams, "(?<!\\\\);");
 
         String param;
@@ -151,13 +157,22 @@ public class WifiScheme {
          * but could be interpreted as hex (i.e. "ABCD")
          */
         if (parameters.containsKey(Constants.SSID) && (param = parameters.get(Constants.SSID)) != null) {
+            String ssid;
+
             if (param.matches(HEX_PATTERN)) {
-                setSsid(hexToAscii(param));
+                ssid = hexToAscii(param);
             } else {
-                String ssid = unescape(param);
+                ssid = unescape(param);
                 if (ssid.matches(QUOTE_PATTERN)) {
                     ssid = ssid.substring(1, ssid.length() - 1);
                 }
+            }
+
+            // TODO: SSID can also be NULL-bytes, might not actually be printable or normal Strings
+            if (ssid.length() > 32) {
+                // SSID length constraint
+                throw new IllegalArgumentException("SSID too long!");
+            } else {
                 setSsid(ssid);
             }
         } else {
@@ -180,27 +195,43 @@ public class WifiScheme {
                  * Enclose in double quotes if it is an ASCII name, but could be interpreted as hex
                  * (i.e. "ABCD")
                  */
-                switch(auth) {
-                    case WEP:
-                    case WPA:
-                        if (parameters.containsKey(Constants.PSK) && (param = parameters.get(Constants.PSK)) != null) {
-                            if (param.matches(HEX_PATTERN)) {
-                                setPsk(hexToAscii(param));
-                            } else {
-                                String psk = unescape(param);
-                                if (psk.matches(QUOTE_PATTERN)) {
-                                    String pskExtract = psk.substring(1, psk.length() - 1);
-                                    if (pskExtract.matches(HEX_PATTERN)) psk = pskExtract;
-                                }
-                                setPsk(psk);
-                            }
+                if (auth == Authentication.NOPASS) {
+                    setPsk(null);
+                } else {
+                    String psk;
+
+                    if (parameters.containsKey(Constants.PSK) && (param = parameters.get(Constants.PSK)) != null) {
+                        if (param.matches(HEX_PATTERN)) {
+                            psk = hexToAscii(param);
                         } else {
-                            throw new IllegalArgumentException("No PSK specified!");
+                            psk = unescape(param);
+                            if (psk.matches(QUOTE_PATTERN)) {
+                                String pskExtract = psk.substring(1, psk.length() - 1);
+                                if (pskExtract.matches(HEX_PATTERN)) psk = pskExtract;
+                            }
                         }
-                        break;
-                    case NOPASS:
-                        setPsk(null);
-                        break;
+                    } else {
+                        throw new IllegalArgumentException("No PSK specified!");
+                    }
+
+                    int pskLength = psk.length();
+
+                    if (auth == Authentication.WPA) {
+                        if (pskLength < 8 || pskLength > 63) {
+                            // WPA PSK length-constraint
+                            throw new IllegalArgumentException("Illegal PSK-length: " + psk.length());
+                        } else {
+                            setPsk(psk);
+                        }
+                    } else if (auth == Authentication.WEP) {
+                        // WEP-64/128/152/256 PSK-Length = WEP-Level - 24 Bits (IV)
+                        if (pskLength == 5 || pskLength == 13 || pskLength == 16 || pskLength == 29) {
+                            setPsk(psk);
+                        } else {
+                            // WEP PSK length-constraint
+                            throw new IllegalArgumentException("Illegal PSK-length: " + psk.length());
+                        }
+                    }
                 }
             } else {
                 throw new IllegalArgumentException("No AUTHENTICATION specified!");
