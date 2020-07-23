@@ -56,14 +56,27 @@ dependencies {
     implementation 'androidx.navigation:navigation-ui:2.3.0'
     implementation 'androidx.legacy:legacy-support-v4:1.0.0'
 
-    // QR-Scanner
-    implementation 'com.budiyev.android:code-scanner:2.1.0'
-
     // Testing
     testImplementation 'org.hamcrest:hamcrest:2.2'
     testImplementation 'junit:junit:4.13'
     androidTestImplementation 'androidx.test.ext:junit:1.1.1'
     androidTestImplementation 'androidx.test.espresso:espresso-core:3.2.0'
+
+    // QR-Scanner
+    implementation 'com.budiyev.android:code-scanner:2.1.0'
+
+    // Network service discovery
+    implementation 'com.github.andriydruk:rx2dnssd:0.9.13'
+
+    // Permission-request
+    implementation 'com.vanniktech:rxpermission:0.7.0'
+
+    // Activity-result
+    implementation 'com.petarmarijanovic:rx-activity-result:2.2.1'
+
+    // Basic RxJava/Android 3
+    implementation 'io.reactivex.rxjava3:rxandroid:3.0.0'
+    implementation 'io.reactivex.rxjava3:rxjava:3.0.0'
 
     // Logging
     implementation 'com.jakewharton.timber:timber:4.7.1'
