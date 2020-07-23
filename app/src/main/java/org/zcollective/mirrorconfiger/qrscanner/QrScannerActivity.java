@@ -1,63 +1,72 @@
 package org.zcollective.mirrorconfiger.qrscanner;
 
-import android.content.BroadcastReceiver;
-import android.content.Context;
+import android.Manifest;
 import android.content.Intent;
 import android.net.ConnectivityManager;
 import android.net.Network;
-import android.net.NetworkCapabilities;
-import android.net.NetworkRequest;
 import android.net.wifi.WifiConfiguration;
 import android.net.wifi.WifiManager;
-import android.os.Build;
 import android.os.Bundle;
-
-import com.budiyev.android.codescanner.CodeScanner;
-import com.budiyev.android.codescanner.CodeScannerView;
-
-import androidx.annotation.IntDef;
-import androidx.annotation.NonNull;
-import androidx.annotation.Nullable;
-import androidx.appcompat.app.AppCompatActivity;
-import androidx.appcompat.widget.Toolbar;
-
 import android.provider.Settings;
-import android.util.Log;
+import android.text.TextUtils;
 import android.view.View;
 import android.widget.ProgressBar;
 import android.widget.Toast;
 
+import androidx.annotation.NonNull;
+import androidx.appcompat.app.ActionBar;
+import androidx.appcompat.app.AppCompatActivity;
+import androidx.appcompat.widget.Toolbar;
+import androidx.fragment.app.FragmentTransaction;
+
+import com.budiyev.android.codescanner.CodeScanner;
+import com.budiyev.android.codescanner.CodeScannerView;
+import com.google.zxing.BarcodeFormat;
+import com.petarmarijanovic.rxactivityresult.ActivityResult;
+import com.petarmarijanovic.rxactivityresult.RxActivityResult;
+import com.vanniktech.rxpermission.Permission;
+import com.vanniktech.rxpermission.RealRxPermission;
+import com.vanniktech.rxpermission.RxPermission;
+
 import org.zcollective.mirrorconfiger.BuildConfig;
 import org.zcollective.mirrorconfiger.R;
-import org.zcollective.mirrorconfiger.util.runtimepermissions.CameraPermissionHelper;
-import org.zcollective.mirrorconfiger.util.runtimepermissions.CameraPermissionHelper.CameraPermissionCallback;
-import org.zcollective.mirrorconfiger.util.wifi.WifiDialogHelper;
-import org.zcollective.mirrorconfiger.util.wifi.WifiDialogHelper.OnDialogCallback;
+import org.zcollective.mirrorconfiger.qrscanner.dialogs.EnableWifiDialog;
+import org.zcollective.mirrorconfiger.qrscanner.dialogs.EnableWifiDialog.WifiDialogResult;
+import org.zcollective.mirrorconfiger.qrscanner.dialogs.GrantPermissionsDialog;
+import org.zcollective.mirrorconfiger.qrscanner.dialogs.GrantPermissionsDialog.GrantPermissionsDialogResult;
+import org.zcollective.mirrorconfiger.qrscanner.dialogs.ProceedToConnectDialog;
+import org.zcollective.mirrorconfiger.qrscanner.dialogs.ProceedToConnectDialog.ProceedToConnectDialogResult;
+import org.zcollective.mirrorconfiger.util.wifi.parser.WifiScheme;
+import org.zcollective.mirrorconfiger.wifi.NetworkStateTracker;
+import org.zcollective.mirrorconfiger.wifi.NetworkStateTracker.NetworkState;
+import org.zcollective.mirrorconfiger.qrscanner.dialogs.WifiDialogHelper;
+import org.zcollective.mirrorconfiger.qrscanner.dialogs.WifiDialogHelper.ConnectWifiDialogCallback;
 import org.zcollective.mirrorconfiger.webconfig.WebConfigActivity;
 
-import java.lang.annotation.Retention;
-import java.lang.annotation.RetentionPolicy;
 import java.net.InetAddress;
 import java.util.Arrays;
-import java.util.Objects;
+import java.util.Collections;
+import java.util.concurrent.TimeUnit;
 
-import static org.zcollective.mirrorconfiger.qrscanner.QrScannerActivity.QrFlowState.ERROR;
-import static org.zcollective.mirrorconfiger.qrscanner.QrScannerActivity.QrFlowState.READY;
+import io.reactivex.rxjava3.core.SingleObserver;
+import io.reactivex.android.schedulers.AndroidSchedulers;
+import io.reactivex.rxjava3.disposables.Disposable;
+import io.reactivex.rxjava3.core.Completable;
+import io.reactivex.rxjava3.core.CompletableObserver;
+import io.reactivex.rxjava3.core.Observable;
+import io.reactivex.rxjava3.disposables.CompositeDisposable;
+import io.reactivex.rxjava3.observers.DisposableCompletableObserver;
+import io.reactivex.schedulers.Schedulers;
+import timber.log.Timber;
 
-public class QrScannerActivity extends AppCompatActivity implements CameraPermissionCallback, OnDialogCallback {
+import static com.vanniktech.rxpermission.Permission.State.GRANTED;
+import static org.zcollective.mirrorconfiger.qrscanner.dialogs.EnableWifiDialog.WifiDialogResult.PROCEED_ENABLE_WIFI;
+import static org.zcollective.mirrorconfiger.qrscanner.dialogs.GrantPermissionsDialog.GrantPermissionsDialogResult.ALLOW_PERMISSION;
+import static org.zcollective.mirrorconfiger.qrscanner.dialogs.ProceedToConnectDialog.ProceedToConnectDialogResult.START_CONNECT;
+
+public class QrScannerActivity extends AppCompatActivity implements ConnectWifiDialogCallback {
 
     // TODO: manage states correctly
-
-    @Override
-    public void onCameraPermissionGranted() {
-        scanningJob();
-    }
-
-    @Override
-    public void onCameraPermissionDenied() {
-        Toast.makeText(getApplicationContext(), "Permission Denied", Toast.LENGTH_SHORT).show();
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) wifiDialogHelper.showGrantPermissonsDialog();
-    }
 
     @Override
     public void onProceedConnectingToWifi() {
@@ -67,406 +76,827 @@ public class QrScannerActivity extends AppCompatActivity implements CameraPermis
             if (asdf.startsWith("P:")) {
                 password = asdf.substring(2);
             }
+
+            TextUtils.SimpleStringSplitter splitter = new TextUtils.SimpleStringSplitter(';');
+            splitter.setString(result);
         }
-        connectToWifi("Mirror", password);
+
+        Timber.tag(TAG).wtf("Password: %s", password);
+
+        checkWifiAvailability()
+                .observeOn(io.reactivex.rxjava3.android.schedulers.AndroidSchedulers.mainThread())
+                .onErrorResumeNext(throwable -> {
+                    Timber.tag(TAG).wtf(throwable, "CheckWifiAvailability::onErrorResumeNext()");
+                    return showEnableWifiDialog().andThen(startWifiSettings());
+                 })
+                .andThen(connectToWifiNetwork("Mirror", password))
+                .subscribeOn(io.reactivex.rxjava3.android.schedulers.AndroidSchedulers.mainThread())
+                .subscribe(new CompletableObserver() {
+                    @Override
+                    public void onSubscribe(
+                            io.reactivex.rxjava3.disposables.@io.reactivex.rxjava3.annotations.NonNull Disposable d) {
+                        Timber.tag(TAG).d("Starting WIFI Connect");
+                        compositeDisposable.add(d);
+                        wifiConnect = d;
+                    }
+
+                    @Override
+                    public void onComplete() {
+                        Timber.tag(TAG).d("Completing WIFI Connected");
+                        wifiConnect.dispose();
+                        wifiConnect = null;
+                    }
+
+                    @Override
+                    public void onError(@io.reactivex.rxjava3.annotations.NonNull Throwable e) {
+                        Timber.tag(TAG).w(e);
+                        wifiConnect.dispose();
+                        wifiConnect = null;
+                        finish();
+                    }
+                });
     }
 
     @Override
     public void onStopConnectingToWifi() {
         onSupportNavigateUp();
         wifiDialogHelper.dismissProceedToConnectDialog();
-    }
-
-    @Override
-    public void onProceedToEnableWifi() {
-//        if (state == QrFlowState.RECEIVED_QR_CODE) {
-            // open settings screen
-//            state = QrFlowState.REQUESTING_WIFI_ENABLE;
-            startActivityForResult(new Intent(Settings.ACTION_WIFI_SETTINGS), REQUEST_ENABLE_WIFI);
-//        }
-    }
-
-    @Override
-    public void onStopToEnableWifi() {
-        Log.w(TAG, "User declined to enable Wifi. Stopping Activity.");
-        transitionInternalState(true);
         finish();
     }
 
-    @Override
-    public void onProceedGrantingPermissions() {
-        if (cameraPermissionHelper != null) {
-            cameraPermissionHelper.checkCameraPermissions(QrScannerActivity.this);
-        }
-    }
-
-    @Override
-    public void onStopGrantingPermissions() {
-        Log.d(TAG, "User doesn't want to grant permissions");
-    }
-
-    static class WifiBroadcastReceiver extends BroadcastReceiver {
-
-        @Override
-        public void onReceive(Context context, Intent intent) {
-            Log.wtf(TAG, "Received a Broadcast!");
-        }
-    }
-
     private static final String TAG = "QrScanner";
+    private static final String QR_CHAIN_TAG = "QrScannerInit";
+    private static final String NET_CHAIN_TAG = "NetStateObserver";
+    private static final String NET_ID_CHAIN_TAG = "NetIdChecker";
+    private static final String HOST_CONNECTION_CHAIN_TAG = "HostConnectChain";
 
-    // Requests start at 1000
-    private static final int REQUEST_ENABLE_WIFI = 1000;
+    private final CompositeDisposable compositeDisposable = new CompositeDisposable();
 
-    private volatile boolean connecting = false;
+    private volatile boolean retrying = false;
+    private volatile int netId;
 
-    private WifiDialogHelper wifiDialogHelper;
-    private CameraPermissionHelper cameraPermissionHelper;
-    private ConnectivityManager connMgr;
-    private CodeScanner mCodeScanner;
     private ProgressBar bar;
-    private String SSID;
-    private String PW;
     private String result;
+
+    private boolean isConnecting;
+
+    // Helper-Dialogs
+    private GrantPermissionsDialog grantPermissionsDialog;
+    private ProceedToConnectDialog proceedToConnectDialog;
+    private EnableWifiDialog enableWifiDialog;
+    private WifiDialogHelper wifiDialogHelper;
+
+    // System-Services
+    private ConnectivityManager connMgr;
     private WifiManager wifiManager;
+
+    // Rx-Helpers
+    private RxActivityResult rxActivityResult;
+    private RxPermission rxPermission;
+
+    // QR-Code-Scanner
+    private CodeScannerView scannerView;
+    private CodeScanner codeScanner;
+
+    // Disposables
+    private Disposable networkCheck;
+    private Disposable qrScannerInit;
+    private Disposable connectToHost;
+    private Disposable wifiConnect;
+    private io.reactivex.disposables.Disposable permDisposable;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
+        Timber.d("Running QrScannerActivityNew::onCreate()");
+
         super.onCreate(savedInstanceState);
+
         setContentView(R.layout.activity_qr_scanner);
         Toolbar toolbar = findViewById(R.id.toolbar);
         setSupportActionBar(toolbar);
 
-        Objects.requireNonNull(getSupportActionBar());
-        getSupportActionBar().setDisplayHomeAsUpEnabled(true);
-        getSupportActionBar().setDisplayShowHomeEnabled(true);
+        ActionBar actionBar = getSupportActionBar();
+        if (actionBar != null) {
+            actionBar.setDisplayHomeAsUpEnabled(true);
+            actionBar.setDisplayShowHomeEnabled(true);
+        }
 
-        bar = QrScannerActivity.this.findViewById(R.id.webconfig_loading);
+        bar = findViewById(R.id.webconfig_loading);
+        scannerView = findViewById(R.id.scanner_view);
+
+        connMgr = (ConnectivityManager) getApplicationContext().getSystemService(CONNECTIVITY_SERVICE);
         wifiManager = (WifiManager) getApplicationContext().getSystemService(WIFI_SERVICE);
-
-//        if (Build.VERSION.SDK_INT >= 26) {
-            connMgr = (ConnectivityManager) getApplicationContext().getSystemService(CONNECTIVITY_SERVICE);
-
-//            NetworkRequest.Builder request = new NetworkRequest.Builder();
-//            request.addTransportType(NetworkCapabilities.TRANSPORT_WIFI);
-//
-//            connMgr.requestNetwork(request.build(), new ConnectivityManager.NetworkCallback() {
-//
-//                @Override
-//                public void onAvailable(Network network) {
-//                    Log.wtf(TAG, "NetworkCallback::onAvailable");
-//                    Log.d(TAG, "SSID: " + wifiManager.getConnectionInfo().getSSID());
-//
-////                    if (connecting) {
-////                    if (Objects.equals(wifiManager.getConnectionInfo().getSSID(), "<unknown ssid>") || connecting) {
-//                    if (Objects.equals(wifiManager.getConnectionInfo().getSSID(), "\"Mirror\"") ||
-//                        connecting) {
-//
-//                        runOnUiThread(() -> bar.setVisibility(View.VISIBLE));
-//                        connecting = false;
-//
-//                        connMgr.bindProcessToNetwork(network);
-//
-//
-//                        // Pinging webserver-host, so routing-table is filled with correct host
-//                        try {
-//                            InetAddress ping = network.getByName(BuildConfig.MIRROR_SETUP_IP);
-//                            Log.wtf(TAG, "Ping is local address: " + ping.isAnyLocalAddress());
-//                            long start = System.currentTimeMillis();
-//                            Log.wtf(TAG, "Reachable? " + ping.isReachable(3000));
-//                            Log.wtf(TAG, "Ping took: " + (System.currentTimeMillis() - start));
-//                            Log.wtf(TAG, "IP: " + Arrays.toString(ping.getAddress()));
-//                        } catch (Exception e) {
-//                            Log.wtf(TAG, "WTF happened?");
-//                            e.printStackTrace();
-//                        }
-//
-//                        Intent intent = new Intent(QrScannerActivity.this, WebConfigActivity.class);
-//                        intent.putExtra(WebConfigActivity.EXTRA_WEBPAGE, BuildConfig.MIRROR_SETUP_PAGE);
-//
-//                        runOnUiThread(() -> {
-//                            Log.wtf(TAG, "Starting Webview!");
-//                            bar.setVisibility(View.GONE);
-//                            startActivity(intent);
-//                        });
-//                    }
-//                }
-//
-//                @Override
-//                public void onLosing(Network network, int maxMsToLive) {
-//                    Log.wtf(TAG, "NetworkCallback::onLosing");
-//                    Log.wtf(TAG, "Will be online for another " + maxMsToLive + " ms");
-//                }
-//
-//                @Override
-//                public void onLost(Network network) {
-//                    Log.wtf(TAG, "NetworkCallback::onLost");
-//                    if (connecting) {
-//                        wifiManager.enableNetwork(netId, true);
-//                        wifiManager.reconnect();
-//                    }
-//                }
-//            });
-//        }
-        initializeWifiStateTracker();
+        networkCheck = startNetworkListener();
+        rxActivityResult = new RxActivityResult(this);
+        rxPermission = RealRxPermission.getInstance(getApplicationContext());
 
         // Fragments
-        initializeCameraPermissionHelper();
-        initializeWifiDialogHelper();
+        initFragments();
+
+//        startQrScanning();
+        initQrScanningChain();
+//                .subscribeOn(io.reactivex.rxjava3.android.schedulers.AndroidSchedulers.mainThread())
+//                .subscribe(new CompletableObserver() {
+//                    @Override
+//                    public void onSubscribe(
+//                            io.reactivex.rxjava3.disposables.@io.reactivex.rxjava3.annotations.NonNull Disposable d) {
+//                        Timber.tag(TAG).d("Starting WIFI Connect");
+//                        compositeDisposable.add(d);
+////                        wifiConnect = d;
+//                    }
+//
+//                    @Override
+//                    public void onComplete() {
+//                        Timber.tag(TAG).d("Completing WIFI Connected");
+////                        wifiConnect.dispose();
+////                        wifiConnect = null;
+//                    }
+//
+//                    @Override
+//                    public void onError(@io.reactivex.rxjava3.annotations.NonNull Throwable e) {
+//                        Timber.tag(TAG).w(e);
+////                        wifiConnect.dispose();
+////                        wifiConnect = null;
+//                        finish();
+//                    }
+//                });
+        Timber.d("Finished QrScannerActivityNew::onCreate()");
     }
 
-    private NetworkRequest buildNetworkRequest() {
-        NetworkRequest.Builder request = new NetworkRequest.Builder()
-                .addTransportType(NetworkCapabilities.TRANSPORT_WIFI);
-//        request.addTransportType(NetworkCapabilities.TRANSPORT_ETHERNET);
-//        request.removeCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET);
-        return request.build();
-    }
+    private void initFragments() {
+        Timber.d("Running QrScannerActivityNew::initFragments()");
 
-    @IntDef({
-            ERROR,
-            READY,
-            QrFlowState.SCANNING,
-            QrFlowState.RECEIVED_QR_CODE,
-            QrFlowState.REQUESTING_WIFI_ENABLE,
-            QrFlowState.CONNECTING_TO_WIFI,
-            QrFlowState.WIFI_CONNECTED,
-            QrFlowState.STARTING_PORTAL,
-    })
-    @Retention(value = RetentionPolicy.SOURCE)
-    @interface QrFlowState {
-        int ERROR = -1;
-        int READY = 0;
-        int SCANNING = 1;
-        int RECEIVED_QR_CODE = 2;
-        int REQUESTING_WIFI_ENABLE = 3;
-        int CONNECTING_TO_WIFI = 4;
-        int WIFI_CONNECTED = 5;
-        int STARTING_PORTAL = 6;
-    }
+        FragmentTransaction fragTransaction = getSupportFragmentManager().beginTransaction();
 
-    @QrFlowState
-    private int state = READY;
-    private ConnectivityManager.NetworkCallback ncManager;
-
-    private void initializeWifiStateTracker() {
-        ncManager = new ConnectivityManager.NetworkCallback() {
-
-            @Override
-            public void onAvailable(@NonNull Network network) {
-                Log.wtf(TAG, "NetworkCallback::onAvailable");
-                Log.d(TAG, "SSID: " + wifiManager.getConnectionInfo().getSSID());
-
-//                    if (connecting) {
-//                    if (Objects.equals(wifiManager.getConnectionInfo().getSSID(), "<unknown ssid>") || connecting) {
-                if (Objects.equals(wifiManager.getConnectionInfo().getSSID(), "\"Mirror\"") ||
-                    state == QrFlowState.CONNECTING_TO_WIFI) {
-                    state = QrFlowState.WIFI_CONNECTED;
-
-                    runOnUiThread(() -> bar.setVisibility(View.VISIBLE));
-
-                    connMgr.bindProcessToNetwork(network);
-
-                    // Pinging webserver-host, so routing-table is filled with correct host
-                    try {
-                        InetAddress ping = network.getByName(BuildConfig.MIRROR_SETUP_IP);
-                        Log.wtf(TAG, "Ping is local address: " + ping.isAnyLocalAddress());
-                        long start = System.currentTimeMillis();
-                        Log.wtf(TAG, "Reachable? " + ping.isReachable(3000));
-                        Log.wtf(TAG, "Ping took: " + (System.currentTimeMillis() - start));
-                        Log.wtf(TAG, "IP: " + Arrays.toString(ping.getAddress()));
-                    } catch (Exception e) {
-                        Log.wtf(TAG, "WTF happened?", e);
-                        state = ERROR;
-                        return;
-                    }
-
-                    state = QrFlowState.STARTING_PORTAL;
-
-                    Intent intent = new Intent(QrScannerActivity.this, WebConfigActivity.class);
-                    intent.putExtra(WebConfigActivity.EXTRA_WEBPAGE, BuildConfig.MIRROR_SETUP_PAGE);
-
-                    runOnUiThread(() -> {
-                        Log.wtf(TAG, "Starting Webview!");
-                        bar.setVisibility(View.GONE);
-                        startActivity(intent);
-                    });
-                }
-            }
-
-            @Override
-            public void onLosing(@NonNull Network network, int maxMsToLive) {
-                Log.wtf(TAG, "NetworkCallback::onLosing");
-                Log.wtf(TAG, "Will be online for another " + maxMsToLive + " ms");
-            }
-
-            @Override
-            public void onLost(@NonNull Network network) {
-                Log.wtf(TAG, "NetworkCallback::onLost");
-                if (state == QrFlowState.CONNECTING_TO_WIFI) {
-                    wifiManager.enableNetwork(netId, true);
-                    wifiManager.reconnect();
-                }
-            }
-        };
-
-        connMgr.requestNetwork(buildNetworkRequest(), ncManager);
-    }
-
-    private void transitionInternalState(boolean error) {
-        if (error) {
-            // TODO: how can we tackle this?
-//            Log.i(TAG, "State change: ERROR -> ERROR");
-            state = ERROR;
-            return;
-        }
-
-        switch (state) {
-            case QrFlowState.ERROR:
-                Log.i(TAG, "State change: ERROR -> ERROR");
-                break;
-            case QrFlowState.READY:
-                Log.i(TAG, "State change: READY -> SCANNING");
-                break;
-            case QrFlowState.SCANNING:
-                Log.i(TAG, "State change: SCANNING -> RECEIVED_QR_CODE");
-                break;
-            case QrFlowState.RECEIVED_QR_CODE:
-                Log.i(TAG, "State change: RECEIVED_QR_CODE -> REQUESTING_WIFI_ENABLE");
-                break;
-            case QrFlowState.REQUESTING_WIFI_ENABLE:
-                Log.i(TAG, "State change: REQUESTING_WIFI_ENABLE -> CONNECTING_TO_WIFI");
-                break;
-            case QrFlowState.CONNECTING_TO_WIFI:
-                Log.i(TAG, "State change: CONNECTING_TO_WIFI -> WIFI_CONNECTED");
-                break;
-            case QrFlowState.WIFI_CONNECTED:
-                Log.i(TAG, "State change: WIFI_CONNECTED -> STARTING_PORTAL");
-                break;
-            case QrFlowState.STARTING_PORTAL:
-                Log.i(TAG, "State change: STARTING_PORTAL -> STARTING_PORTAL");
-                break;
-        }
-    }
-
-    private void initializeWifiDialogHelper() {
         wifiDialogHelper =
                 (WifiDialogHelper) getSupportFragmentManager().findFragmentByTag(WifiDialogHelper.TAG);
 
         if (wifiDialogHelper == null) {
             wifiDialogHelper = new WifiDialogHelper();
-            getSupportFragmentManager().beginTransaction()
-                                       .add(wifiDialogHelper, WifiDialogHelper.TAG)
-                                       .commitNow();
+            fragTransaction.add(wifiDialogHelper, WifiDialogHelper.TAG);
         }
-    }
 
-    private void initializeCameraPermissionHelper() {
-        cameraPermissionHelper =
-                (CameraPermissionHelper) getSupportFragmentManager().findFragmentByTag(CameraPermissionHelper.TAG);
+        enableWifiDialog =
+                (EnableWifiDialog) getSupportFragmentManager().findFragmentByTag(EnableWifiDialog.TAG);
 
-        if (cameraPermissionHelper == null) {
-            cameraPermissionHelper = CameraPermissionHelper.newInstance();
-            getSupportFragmentManager().beginTransaction()
-                                       .add(cameraPermissionHelper, CameraPermissionHelper.TAG)
-                                       .commitNow();
+        if (enableWifiDialog == null) {
+            enableWifiDialog = new EnableWifiDialog();
+            fragTransaction.add(enableWifiDialog, EnableWifiDialog.TAG);
         }
+
+        grantPermissionsDialog =
+                (GrantPermissionsDialog) getSupportFragmentManager().findFragmentByTag(GrantPermissionsDialog.TAG);
+
+        if (grantPermissionsDialog == null) {
+            grantPermissionsDialog = new GrantPermissionsDialog();
+            fragTransaction.add(grantPermissionsDialog, GrantPermissionsDialog.TAG);
+        }
+
+        proceedToConnectDialog =
+                (ProceedToConnectDialog) getSupportFragmentManager().findFragmentByTag(ProceedToConnectDialog.TAG);
+
+        if (proceedToConnectDialog == null) {
+            proceedToConnectDialog = new ProceedToConnectDialog();
+            fragTransaction.add(proceedToConnectDialog, ProceedToConnectDialog.TAG);
+        }
+
+        fragTransaction.commitNow();
+
+        Timber.d("Finished QrScannerActivityNew::initFragments()");
     }
 
-    @Override
-    protected void onPostCreate(@Nullable Bundle savedInstanceState) {
-        super.onPostCreate(savedInstanceState);
+    private Completable requestCameraPermission() {
+        return Completable.create(emitter ->
+            rxPermission
+                    .request(Manifest.permission.CAMERA)
+                    .subscribeOn(AndroidSchedulers.mainThread())
+                    .subscribe(new io.reactivex.SingleObserver<Permission>() {
+//                        private Disposable permDisposable = null;
 
-        // This starts the whole process
-        cameraPermissionHelper.checkCameraPermissions(this);
+                        @Override
+                        public void onSubscribe(io.reactivex.disposables.Disposable d) {
+                            Timber.tag(TAG).i("RxActivityResult::onSubscribe()");
+                            permDisposable = d;
+                        }
+
+                        @Override
+                        public void onSuccess(Permission permission) {
+                            Timber.tag(TAG).i("RxPermission::onSuccess(): %s", permission.state().name());
+
+                            if (permission.state() == GRANTED) {
+                                emitter.onComplete();
+                            } else {
+                                emitter.tryOnError(new IllegalStateException());
+                            }
+
+                            permDisposable.dispose();
+                            permDisposable = null;
+                        }
+
+                        @Override
+                        public void onError(Throwable throwable) {
+                            Timber.tag(TAG).e(throwable, "RxActivityResult::onError()");
+                            emitter.tryOnError(throwable);
+                            permDisposable.dispose();
+                            permDisposable = null;
+                        }
+                    })
+        );
     }
 
-    private void scanningJob() {
-        CodeScannerView scannerView = findViewById(R.id.scanner_view);
+    private Completable initQrScannerObject() {
+        return Completable.create(emitter -> {
+            codeScanner = new CodeScanner(this, scannerView);
+            codeScanner.setAutoFocusInterval(200);
+            codeScanner.setFormats(Collections.singletonList(BarcodeFormat.QR_CODE));
+            codeScanner.setDecodeCallback(result -> { // TODO: rx mapping, filtering, ...
+                String text = result.getText();
+                Timber.tag(TAG).wtf(text);
 
-        mCodeScanner = new CodeScanner(this, scannerView);
-        mCodeScanner.setDecodeCallback(result -> runOnUiThread(() -> {
-            if (state == QrFlowState.SCANNING) {
-                // TODO: check if text from qr-code is correct
-//                state = QrFlowState.RECEIVED_QR_CODE;
-                transitionInternalState(false);
-                Toast.makeText(QrScannerActivity.this, result.getText(), Toast.LENGTH_SHORT).show();
-                QrScannerActivity.this.result = result.getText();
-                wifiDialogHelper.showProceedToConnectDialog();
+                runOnUiThread(() -> {
+                    // TODO: check if text from qr-code is correct
+                    Toast.makeText(QrScannerActivity.this, text, Toast.LENGTH_SHORT)
+                         .show();
+                    QrScannerActivity.this.result = text;
+                    wifiDialogHelper.showProceedToConnectDialog();
+                });
+            });
+            emitter.onComplete();
+        });
+    }
+
+//    private Observable<String> initQrScanningNew() {
+//    private Completable initQrScanningChain() {
+    private void initQrScanningChain() {
+        if (codeScanner == null) {
+            codeScanner = new CodeScanner(this, scannerView);
+            codeScanner.setAutoFocusInterval(200);
+            codeScanner.setFormats(Collections.singletonList(BarcodeFormat.QR_CODE));
+        } else {
+            codeScanner.startPreview();
+        }
+
+        Observable.<String>create(emitter -> codeScanner.setDecodeCallback(code -> {
+            String codeString = code.getText();
+            Timber.tag(TAG).wtf("Read QR-Code: '%s'", codeString);
+            emitter.onNext(codeString);
+        })).map(WifiScheme::parse)
+                .filter(WifiScheme::isMirrorConfiguration)
+                .map(WifiScheme::generateWifiConfiguration)
+//           .concatMapCompletable(wifiConfiguration -> Completable.defer(() -> connectToWifiNetwork(wifiConfiguration)));
+                //TODO: experimental idea
+                .observeOn(io.reactivex.rxjava3.android.schedulers.AndroidSchedulers.mainThread())
+                .flatMapCompletable(wifiConfiguration -> {
+                    Timber.tag(TAG).wtf(wifiConfiguration.toString());
+
+                    return showProceedToConnectDialog()
+                            .doOnError(throwable -> {
+                                Timber.tag(TAG).wtf(throwable, "ShowProceedToConnectDialog::doOnError()");
+                                wifiDialogHelper.dismissProceedToConnectDialog();
+                                onSupportNavigateUp();
+                            })
+                            .observeOn(io.reactivex.rxjava3.android.schedulers.AndroidSchedulers.mainThread())
+                            .andThen(checkWifiAvailability()
+                                    .onErrorResumeNext(throwable -> {
+                                        Timber.tag(TAG).wtf(throwable, "CheckWifiAvailability::onErrorResumeNext()");
+                                        return showEnableWifiDialog().andThen(startWifiSettings());
+                                    }))
+                            .andThen(connectToWifiNetwork(wifiConfiguration));
+                })
+                .subscribeOn(io.reactivex.rxjava3.android.schedulers.AndroidSchedulers.mainThread())
+                .subscribe(new CompletableObserver() {
+                    @Override
+                    public void onSubscribe(
+                            io.reactivex.rxjava3.disposables.@io.reactivex.rxjava3.annotations.NonNull Disposable d) {
+                        Timber.tag(TAG).d("Starting WIFI Connect");
+                        compositeDisposable.add(d);
+//                        wifiConnect = d;
+                    }
+
+                    @Override
+                    public void onComplete() {
+                        Timber.tag(TAG).d("Completing WIFI Connected");
+//                        wifiConnect.dispose();
+//                        wifiConnect = null;
+                    }
+
+                    @Override
+                    public void onError(@io.reactivex.rxjava3.annotations.NonNull Throwable e) {
+                        Timber.tag(TAG).w(e);
+//                        wifiConnect.dispose();
+//                        wifiConnect = null;
+                        finish();
+                    }
+                });
+            //).subscribeOn(io.reactivex.rxjava3.android.schedulers.AndroidSchedulers.mainThread());
+//           .subscribe(new CompletableObserver() {
+//               @Override
+//               public void onSubscribe(
+//                       io.reactivex.rxjava3.disposables.@io.reactivex.rxjava3.annotations.NonNull Disposable d) {
+//                   Timber.tag(TAG).d("Starting WIFI Connect");
+//                   compositeDisposable.add(d);
+//                   wifiConnect = d;
+//               }
+//
+//               @Override
+//               public void onComplete() {
+//                   Timber.tag(TAG).d("Completing WIFI Connected");
+//                   wifiConnect.dispose();
+//                   wifiConnect = null;
+//               }
+//
+//               @Override
+//               public void onError(@io.reactivex.rxjava3.annotations.NonNull Throwable e) {
+//                   Timber.tag(TAG).w(e);
+//                   wifiConnect.dispose();
+//                   wifiConnect = null;
+//                   finish();
+//               }
+//           });
+
+
+//            mCodeScanner.setDecodeCallback(result -> { // TODO: rx mapping, filtering, ...
+//                String text = result.getText();
+//                Timber.tag(TAG).wtf(text);
+//
+//                runOnUiThread(() -> {
+//                    // TODO: check if text from qr-code is correct
+//                    Toast.makeText(QrScannerActivityNew.this, text, Toast.LENGTH_SHORT)
+//                         .show();
+//                    QrScannerActivityNew.this.result = text;
+//                    wifiDialogHelper.showProceedToConnectDialog();
+//                });
+//            });
+//        }).mapOptional(code -> {
+//          .filter(code -> {
+//            // WIFI:S:<SSID>;T:<WPA|WEP|>;P:<password>;;
+//            // Taken from: https://github.com/zxing/zxing/wiki/Barcode-Contents#wi-fi-network-config-android-ios-11
+//
+//
+////            return !code.isEmpty() && code.matches(".*");
+////            return !code.isEmpty() && code.matches("WIFI:S:\"()\";T:WPA;P:();;");
+////        })
+//        .map(code -> {
+//            WifiConfiguration wifiConfig = new WifiConfiguration();
+//            wifiConfig.SSID = String.format("\"%s\"", ssid);
+//            wifiConfig.preSharedKey = String.format("\"%s\"", pw);
+//            wifiConfig.allowedKeyManagement.set(WifiConfiguration.KeyMgmt.WPA_PSK);
+//            return wifiConfig;
+//        }).concatMapCompletable(wifiConfiguration -> Completable.defer(() -> connectToWifiNetwork(wifiConfiguration)));
+////          .subscribe(this::connectToWifiNetwork, throwable -> Timber.tag(TAG).w(throwable)); // TODO: don't do this regex
+    }
+
+    @NonNull
+    private Completable connectToWifiNetwork(@NonNull WifiConfiguration wifiConfig) {
+        return Completable.create(emitter -> {
+            netId = wifiManager.addNetwork(wifiConfig);
+
+            Timber.tag(TAG).wtf("NetId: %d | %s", netId, wifiConfig.SSID);
+
+            if (netId == -1) {
+                emitter.tryOnError(new IllegalStateException());
+            } else if (isConnecting = wifiManager.disconnect()) {
+                emitter.onComplete();
+            } else {
+                emitter.tryOnError(new IllegalStateException());
             }
-        }));
+        }).retry(5);
 
-        transitionInternalState(false);
-//        state = QrFlowState.SCANNING;
-
-        scannerView.setOnClickListener(view -> mCodeScanner.startPreview());
+        // TODO: retry connecting
     }
 
-    @Override
-    protected void onDestroy() {
-        super.onDestroy();
-        // Making sure we clean references on destroy
-        cameraPermissionHelper = null;
-//        connMgr.unregisterNetworkCallback(ncManager);
+    private Completable showProceedToConnectDialog() {
+        return Completable.create(emitter ->
+            proceedToConnectDialog
+                    .show()
+                    .subscribe(new SingleObserver<ProceedToConnectDialogResult>() {
+                        @Override
+                        public void onSubscribe(@io.reactivex.rxjava3.annotations.NonNull io.reactivex.rxjava3.disposables.Disposable d) {
+                            Timber.tag(TAG).i("ProceedToConnectDialog::onSubscribe()");
+                            compositeDisposable.add(d);
+                        }
+
+                        @Override
+                        public void onSuccess(ProceedToConnectDialogResult dialogResult) {
+                            Timber.tag(TAG).i("ProceedToConnectDialog::onSuccess()");
+
+                            if (dialogResult == START_CONNECT) {
+                                emitter.onComplete();
+                            } else {
+                                emitter.tryOnError(new IllegalStateException());
+                            }
+                        }
+
+                        @Override
+                        public void onError(Throwable throwable) {
+                            Timber.tag(TAG).e(throwable, "ProceedToConnectDialog::onError()");
+                            emitter.tryOnError(throwable);
+                        }
+        }));
+    }
+
+    private Completable showGrantPermissionsDialog() {
+        return Completable.create(emitter ->
+            grantPermissionsDialog
+                    .show()
+                    .subscribe(new SingleObserver<GrantPermissionsDialogResult>() {
+                        @Override
+                        public void onSubscribe(@io.reactivex.rxjava3.annotations.NonNull io.reactivex.rxjava3.disposables.Disposable d) {
+                            Timber.tag(TAG).i("GrantPermissionsDialog::onSubscribe()");
+                            compositeDisposable.add(d);
+                        }
+
+                        @Override
+                        public void onSuccess(GrantPermissionsDialogResult dialogResult) {
+                            Timber.tag(TAG).i("GrantPermissionsDialog::onSuccess()");
+
+                            if (dialogResult == ALLOW_PERMISSION) {
+                                emitter.onComplete();
+                            } else {
+                                emitter.tryOnError(new IllegalStateException());
+                            }
+                        }
+
+                        @Override
+                        public void onError(Throwable throwable) {
+                            Timber.tag(TAG).e(throwable, "GrantPermissionsDialog::onError()");
+                            emitter.tryOnError(throwable);
+                        }
+        }));
+    }
+
+    private void startQrScanning() {
+        requestCameraPermission()
+                .subscribeOn(io.reactivex.rxjava3.android.schedulers.AndroidSchedulers.mainThread())
+                .onErrorResumeNext(throwable -> {
+                    Timber.tag(QR_CHAIN_TAG).wtf(throwable, "RequestCameraPermission::onErrorResumeNext()");
+                    return showGrantPermissionsDialog();
+                })
+                .andThen(initQrScannerObject())
+                .andThen(Completable.fromRunnable(() -> codeScanner.startPreview()))
+                .doOnSubscribe(d -> Timber.tag(QR_CHAIN_TAG).d("Starting QR-Scanning"))
+//                .subscribe(() -> {
+//                    Timber.tag(QR_CHAIN_TAG).d("Completing Initialization of QR-Scanning");
+//                }, throwable -> {
+//                    Timber.tag(QR_CHAIN_TAG).w(throwable);
+//                    finish();
+//                });
+                .subscribe(new CompletableObserver() {
+                    @Override
+                    public void onSubscribe(
+                            io.reactivex.rxjava3.disposables.@io.reactivex.rxjava3.annotations.NonNull Disposable d) {
+                        Timber.tag(TAG).d("Starting QR-Scanning");
+                        compositeDisposable.add(d);
+                        qrScannerInit = d;
+                    }
+
+                    @Override
+                    public void onComplete() {
+                        Timber.tag(TAG).d("Completing Initialization of QR-Scanning");
+                        qrScannerInit = null;
+                    }
+
+                    @Override
+                    public void onError(@io.reactivex.rxjava3.annotations.NonNull Throwable e) {
+                        Timber.tag(TAG).w(e);
+                        finish();
+                    }
+                });
+    }
+
+    @NonNull
+    private Disposable startNetworkListener() {
+        return NetworkStateTracker.trackCurrentNetwork(this)
+                .subscribeOn(io.reactivex.rxjava3.schedulers.Schedulers.io())
+                .observeOn(io.reactivex.rxjava3.schedulers.Schedulers.single())
+                .subscribe(networkStateObject -> {
+                    NetworkState state = networkStateObject.state;
+                    Timber.tag(NET_CHAIN_TAG).d("State=%s", state.name());
+
+                    if (state == NetworkState.AVAILABLE) {
+
+                        Timber.tag(NET_CHAIN_TAG).d("Connection available.");
+
+                        if (isConnecting && connectToHost == null) {
+                            Timber.tag(NET_CHAIN_TAG).d("Connecting to mirror.");
+                            connToHost(networkStateObject.network);
+                        }
+                    } else if (state == NetworkState.LOST) {
+
+                        Timber.tag(NET_CHAIN_TAG).d("Lost connection.");
+                        if (!retrying && connectToHost != null) connectToHost.dispose();
+                    }
+
+                }, throwable -> Timber.tag(NET_CHAIN_TAG).e(throwable, "error"));
+    }
+
+    private Completable checkNetworkId() {
+        return Completable.create(emitter -> {
+            if (wifiManager.getConnectionInfo().getNetworkId() != netId) {
+                Timber.tag(NET_ID_CHAIN_TAG)
+                      .wtf("Wrong network, looking for %d, found %d -> reconnecting!",
+                              netId, wifiManager.getConnectionInfo().getNetworkId());
+                retrying = true;
+                wifiManager.disconnect();
+                wifiManager.enableNetwork(netId, true);
+                wifiManager.reconnect();
+                emitter.tryOnError(new IllegalStateException());
+            } else {
+                emitter.onComplete();
+            }
+        }).retry(5);
+        // TODO: somehow this triggers infinitely
+    }
+
+    private void connToHost(Network network) {
+        checkNetworkId()
+                .andThen(Completable.fromRunnable(() -> {
+                    isConnecting = false;
+                    Timber.tag(HOST_CONNECTION_CHAIN_TAG)
+                          .wtf(String.valueOf(wifiManager.getConnectionInfo().getIpAddress()));
+                    runOnUiThread(() -> bar.setVisibility(View.VISIBLE));
+                }))
+                .andThen(bindTrafficToNetwork(network))
+                .andThen(pingConfigurationServer(network))
+                .andThen(Completable.create(emitter -> {
+                    Intent intent = new Intent(QrScannerActivity.this, WebConfigActivity.class);
+                    intent.putExtra(WebConfigActivity.EXTRA_WEBPAGE, BuildConfig.MIRROR_SETUP_PAGE);
+
+                    if (networkCheck != null) networkCheck.dispose();
+
+                    io.reactivex.rxjava3.android.schedulers.AndroidSchedulers.mainThread().scheduleDirect(() -> {
+                        Timber.tag(HOST_CONNECTION_CHAIN_TAG).wtf("Starting WebView!");
+                        bar.setVisibility(View.GONE);
+                        startActivity(intent);
+                    }, 20, TimeUnit.MILLISECONDS);
+//                    runOnUiThread(() -> {
+//                        Timber.tag(HOST_CONNECTION_CHAIN_TAG).wtf("Starting WebView!");
+//                        bar.setVisibility(View.GONE);
+//                        startActivity(intent);
+//                    });
+
+                    emitter.onComplete();
+                }))
+//                .andThen(Completable.fromRunnable(() -> { // TODO: this last step should be a flowable
+//                    Intent intent = new Intent(QrScannerActivityNew.this, WebConfigActivity.class);
+//                    intent.putExtra(WebConfigActivity.EXTRA_WEBPAGE, BuildConfig.MIRROR_SETUP_PAGE);
+//
+//                    if (networkCheck != null) networkCheck.dispose();
+//
+//                    runOnUiThread(() -> {
+//                        Timber.tag(HOST_CONNECTION_CHAIN_TAG).wtf("Starting WebView!");
+//                        bar.setVisibility(View.GONE);
+//                        startActivity(intent);
+//                    });
+//                }))
+                .subscribeOn(io.reactivex.rxjava3.android.schedulers.AndroidSchedulers.mainThread())
+                .doOnSubscribe(d -> connectToHost = d)
+                .doAfterTerminate(() -> {
+                    connectToHost = null;
+                    retrying = false;
+                })
+//                .subscribe(() -> {
+//                    Timber.tag("Chain").i("Completing connect-to-host chain");
+//                }, throwable -> {
+//                    Timber.tag("Chain").e(throwable, "Error occurred in chain!");
+//                });
+//                .doOnLifecycle()
+                .subscribe(new DisposableCompletableObserver() {
+                    @Override
+                    protected void onStart() {
+                        Timber.tag(HOST_CONNECTION_CHAIN_TAG)
+                              .i("Starting connect-to-host chain");
+                    }
+
+                    @Override
+                    public void onComplete() {
+                        Timber.tag(HOST_CONNECTION_CHAIN_TAG)
+                              .i("Completing connect-to-host chain");
+                        dispose();
+                    }
+
+                    @Override
+                    public void onError(@io.reactivex.rxjava3.annotations.NonNull Throwable throwable) {
+                        Timber.tag(HOST_CONNECTION_CHAIN_TAG)
+                              .e(throwable, "Error occurred in chain!");
+                        dispose();
+//                        isConnecting = true;
+                    }
+                });
+    }
+
+    private Completable bindTrafficToNetwork(Network network) {
+        return Completable.create(emitter -> {
+            if (network != null && connMgr.bindProcessToNetwork(network)) {
+                emitter.onComplete();
+            } else {
+                Timber.d("Cannot bind traffic to given network");
+                emitter.tryOnError(new IllegalStateException());
+            }
+        });
+    }
+
+    private Completable pingConfigurationServer(Network network) {
+        return Completable.create(emitter -> {
+            boolean isReachable;
+
+            try {
+                InetAddress ping = network.getByName(BuildConfig.MIRROR_SETUP_IP);
+                Timber.tag(TAG).wtf("Ping is local address: %B", ping.isAnyLocalAddress());
+
+                long start = System.currentTimeMillis();
+                isReachable = ping.isReachable(5000);
+                long end = System.currentTimeMillis() - start;
+                String ip = Arrays.toString(ping.getAddress());
+
+                Timber.tag(TAG).wtf("IP=%s, isReachable=%B, time=%d", ip, isReachable, end);
+            } catch (Exception e) {
+                Timber.tag(TAG).wtf(e, "WTF happened?");
+                isReachable = false;
+            }
+
+            if (isReachable) {
+                emitter.onComplete();
+            } else {
+                emitter.tryOnError(new IllegalStateException());
+            }
+        });
     }
 
     @Override
     protected void onResume() {
         super.onResume();
-        if (mCodeScanner != null) mCodeScanner.startPreview();
-        connMgr.requestNetwork(buildNetworkRequest(), ncManager);
+        if (codeScanner != null) codeScanner.startPreview();
+    }
+
+    @Override
+    protected void onDestroy() {
+        Timber.d("Running QrScannerActivityNew::onDestroy()");
+
+        // Disposing of all - yet - unfinished Disposables
+        compositeDisposable.clear();
+
+        if (qrScannerInit != null) {
+            qrScannerInit.dispose();
+            qrScannerInit = null;
+        }
+
+        if (wifiConnect != null) {
+            wifiConnect.dispose();
+            wifiConnect = null;
+        }
+
+        if (networkCheck != null) {
+            networkCheck.dispose();
+            networkCheck = null;
+        }
+
+        if (codeScanner != null) {
+            codeScanner.releaseResources();
+            codeScanner = null;
+        }
+
+        // Removing all views from underlying View-Group deals with memory-leakage
+        if (scannerView != null) {
+            scannerView.removeAllViews();
+            scannerView = null;
+        }
+
+        // Dispose of all started Fragments
+        FragmentTransaction fragmentTransaction = getSupportFragmentManager().beginTransaction();
+        if (wifiDialogHelper != null) fragmentTransaction.remove(wifiDialogHelper);
+        if (enableWifiDialog != null) fragmentTransaction.remove(enableWifiDialog);
+        if (grantPermissionsDialog != null) fragmentTransaction.remove(grantPermissionsDialog);
+        if (proceedToConnectDialog != null) fragmentTransaction.remove(proceedToConnectDialog);
+        fragmentTransaction.commitNowAllowingStateLoss();
+
+        grantPermissionsDialog = null;
+        proceedToConnectDialog = null;
+        connMgr = null;
+        rxActivityResult = null;
+        wifiDialogHelper = null;
+        enableWifiDialog = null;
+        scannerView = null;
+        rxPermission = null;
+        codeScanner = null;
+        bar = null;
+        wifiManager = null;
+        networkCheck = null;
+        result = null;
+        qrScannerInit = null;
+        connectToHost = null;
+        wifiConnect = null;
+
+        Timber.d("Finished custom part of QrScannerActivityNew::onDestroy()");
+
+        super.onDestroy();
     }
 
     @Override
     protected void onPause() {
-        if (mCodeScanner != null) mCodeScanner.releaseResources();
-        connMgr.unregisterNetworkCallback(ncManager);
+        if (codeScanner != null) codeScanner.releaseResources();
         super.onPause();
     }
 
     @Override
     public boolean onSupportNavigateUp() {
-        onBackPressed();
+        super.onBackPressed();
         return true;
     }
 
-    @Override
-    protected void onActivityResult(int requestCode, int resultCode, Intent resultIntent) {
-        super.onActivityResult(requestCode, resultCode, resultIntent);
+    private Completable connectToWifiNetwork(String ssid, String pw) {
+        return Completable.create(emitter -> {
+            WifiConfiguration wifiConfig = new WifiConfiguration();
+            wifiConfig.SSID = String.format("\"%s\"", ssid);
+            wifiConfig.preSharedKey = String.format("\"%s\"", pw);
+            wifiConfig.allowedKeyManagement.set(WifiConfiguration.KeyMgmt.WPA_PSK);
 
-        if (requestCode == REQUEST_ENABLE_WIFI && resultCode == 0) {
-            if (wifiManager.isWifiEnabled() || wifiManager.getWifiState() == WifiManager.WIFI_STATE_ENABLING) {
-                connectToSpecificNetwork();
-                return;
+            netId = wifiManager.addNetwork(wifiConfig);
+
+            if (netId == -1) {
+                emitter.tryOnError(new IllegalStateException());
+            } else if (isConnecting = wifiManager.disconnect()) {
+                emitter.onComplete();
+            } else {
+                emitter.tryOnError(new IllegalStateException());
             }
-        }
-        finish();
+        }).retry(5);
+
+        // TODO: retry connecting
     }
 
-    private void connectToWifi(String ssid, String password) {
-        SSID = ssid;
-        PW = password;
+    private Completable startWifiSettings() {
+        return Completable.create(emitter ->
+            rxActivityResult
+                    .start(new Intent(Settings.ACTION_WIFI_SETTINGS))
+                    .subscribeOn(Schedulers.trampoline())
+                    .subscribe(new io.reactivex.SingleObserver<ActivityResult>() {
 
-        transitionInternalState(false);
+                        @Override
+                        public void onSubscribe(io.reactivex.disposables.Disposable d) {
+                            Timber.tag(TAG).i("RxActivityResult::onSubscribe()");
+//                            compositeDisposable.add(d);
+                        }
 
-        if (!wifiManager.isWifiEnabled()) {
-            wifiDialogHelper.showEnableWifiDialog();
-        } else {
-            connectToSpecificNetwork();
-        }
+                        @Override
+                        public void onSuccess(@NonNull ActivityResult activityResult) {
+                            Timber.tag(TAG).i("RxActivityResult::onSuccess()");
+
+                            if (activityResult.getResultCode() == 0 && (wifiManager.isWifiEnabled() ||
+                                wifiManager.getWifiState() == WifiManager.WIFI_STATE_ENABLING)) {
+                                emitter.onComplete();
+                            } else {
+                                emitter.tryOnError(new IllegalStateException());
+                            }
+                        }
+
+                        @Override
+                        public void onError(@NonNull Throwable throwable) {
+                            Timber.tag(TAG).e(throwable, "RxActivityResult::onError()");
+                            emitter.tryOnError(throwable);
+                        }
+                    })
+        );
     }
 
-    private int netId;
+    private Completable showEnableWifiDialog() {
+        return Completable.create(emitter ->
+            enableWifiDialog
+                    .show()
+                    .subscribe(new SingleObserver<WifiDialogResult>() {
+                        @Override
+                        public void onSubscribe(@io.reactivex.rxjava3.annotations.NonNull io.reactivex.rxjava3.disposables.Disposable d) {
+                            Timber.tag(TAG).i("EnableWifiDialog::onSubscribe()");
+                            compositeDisposable.add(d);
+                        }
 
-    private void connectToSpecificNetwork() {
-        WifiConfiguration wifiConfig = new WifiConfiguration();
-        wifiConfig.SSID = String.format("\"%s\"", SSID);
-        wifiConfig.preSharedKey = String.format("\"%s\"", PW);
-        wifiConfig.hiddenSSID = false;//true;
+                        @Override
+                        public void onSuccess(WifiDialogResult wifiDialogResult) {
+                            Timber.tag(TAG).i("EnableWifiDialog::onSuccess()");
 
-        netId = wifiManager.addNetwork(wifiConfig);
-//        connecting = true;
-        wifiManager.disconnect();
-        transitionInternalState(false);
+                            if (wifiDialogResult == PROCEED_ENABLE_WIFI) {
+                                emitter.onComplete();
+                            } else {
+                                emitter.tryOnError(new IllegalStateException());
+                            }
+                        }
+
+                        @Override
+                        public void onError(Throwable throwable) {
+                            Timber.tag(TAG).e(throwable, "EnableWifiDialog::onError()");
+                            emitter.tryOnError(throwable);
+                        }
+                    })
+        );
+    }
+
+    private Completable checkWifiAvailability() {
+        return Completable.create(emitter -> {
+            if (wifiManager.isWifiEnabled()) {
+                emitter.onComplete();
+            } else {
+                emitter.tryOnError(new IllegalStateException());
+            }
+        });
     }
 }

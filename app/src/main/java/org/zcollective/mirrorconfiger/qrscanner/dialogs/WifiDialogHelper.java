@@ -1,4 +1,4 @@
-package org.zcollective.mirrorconfiger.util.wifi;
+package org.zcollective.mirrorconfiger.qrscanner.dialogs;
 
 import android.content.Context;
 import android.os.Bundle;
@@ -19,6 +19,7 @@ public class WifiDialogHelper extends Fragment {
 
     private Context ctx;
     private OnDialogCallback callback;
+    private ConnectWifiDialogCallback callbackAlt;
 
     @Override
     public void onCreate(@Nullable Bundle savedInstanceState) {
@@ -34,6 +35,8 @@ public class WifiDialogHelper extends Fragment {
 
         if (context instanceof OnDialogCallback) {
             callback = (OnDialogCallback) context;
+        } else if (context instanceof ConnectWifiDialogCallback) {
+            callbackAlt = (ConnectWifiDialogCallback) context;
         } else {
             throw new IllegalArgumentException("activity must extend BaseActivity and implement LocationHelper.LocationCallback");
         }
@@ -57,14 +60,19 @@ public class WifiDialogHelper extends Fragment {
     }
 
     private AppCompatDialog proceedToConnectDialog;
-//    private AppCompatDialog enableWifiDialog;
 
     public void showProceedToConnectDialog() {
         proceedToConnectDialog = new AlertDialog
                 .Builder(ctx)
                 .setMessage("Proceed to connect with Mirror?")
-                .setPositiveButton("OK", (dialog, which) -> callback.onProceedConnectingToWifi())
-                .setNegativeButton("Cancel", (dialog, which) -> callback.onStopConnectingToWifi())
+                .setPositiveButton("OK", (dialog, which) -> {
+                    if (callback != null) callback.onProceedConnectingToWifi();
+                    if (callbackAlt != null) callbackAlt.onProceedConnectingToWifi();
+                })
+                .setNegativeButton("Cancel", (dialog, which) -> {
+                    if (callback != null) callback.onStopConnectingToWifi();
+                    if (callbackAlt != null) callbackAlt.onStopConnectingToWifi();
+                })
                 .create();
 
         proceedToConnectDialog.show();
@@ -84,7 +92,7 @@ public class WifiDialogHelper extends Fragment {
                 .show();
     }
 
-    public void showGrantPermissonsDialog() {
+    public void showGrantPermissionsDialog() {
         new AlertDialog.Builder(ctx)
                 .setMessage("You need to allow access permissions")
                 .setPositiveButton("OK", (dialog, which) -> callback.onProceedGrantingPermissions())
@@ -100,5 +108,10 @@ public class WifiDialogHelper extends Fragment {
         void onStopToEnableWifi();
         void onProceedGrantingPermissions();
         void onStopGrantingPermissions();
+    }
+
+    public interface ConnectWifiDialogCallback {
+        void onProceedConnectingToWifi();
+        void onStopConnectingToWifi();
     }
 }
