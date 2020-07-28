@@ -29,7 +29,7 @@ class DeviceLineViewHolder extends RecyclerView.ViewHolder {
             Log.i(LOG_TAG, "OnClick!");
             if (mirrorUrl != null) {
                 Intent intent = new Intent(itemView.getContext(), WebConfigActivity.class);
-                intent.putExtra(WebConfigActivity.EXTRA_WEBPAGE, mirrorUrl);
+                intent.putExtra(WebConfigActivity.EXTRA_WEB_PAGE, mirrorUrl);
 
                 onClick.startActivity(intent);
             }

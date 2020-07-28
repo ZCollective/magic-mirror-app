@@ -620,7 +620,7 @@ public class QrScannerActivity extends AppCompatActivity implements ConnectWifiD
                 .andThen(pingConfigurationServer(network))
                 .andThen(Completable.create(emitter -> {
                     Intent intent = new Intent(QrScannerActivity.this, WebConfigActivity.class);
-                    intent.putExtra(WebConfigActivity.EXTRA_WEBPAGE, BuildConfig.MIRROR_SETUP_PAGE);
+                    intent.putExtra(WebConfigActivity.EXTRA_WEB_PAGE, BuildConfig.MIRROR_SETUP_PAGE);
 
                     if (networkCheck != null) networkCheck.dispose();
 
@@ -639,7 +639,7 @@ public class QrScannerActivity extends AppCompatActivity implements ConnectWifiD
                 }))
 //                .andThen(Completable.fromRunnable(() -> { // TODO: this last step should be a flowable
 //                    Intent intent = new Intent(QrScannerActivityNew.this, WebConfigActivity.class);
-//                    intent.putExtra(WebConfigActivity.EXTRA_WEBPAGE, BuildConfig.MIRROR_SETUP_PAGE);
+//                    intent.putExtra(WebConfigActivity.EXTRA_WEB_PAGE, BuildConfig.MIRROR_SETUP_PAGE);
 //
 //                    if (networkCheck != null) networkCheck.dispose();
 //

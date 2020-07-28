@@ -19,7 +19,7 @@ import timber.log.Timber;
 
 public class WebConfigActivity extends AppCompatActivity {
 
-    public static final String EXTRA_WEBPAGE = "webpage";
+    public static final String EXTRA_WEB_PAGE = "webpage";
 
     private FrameLayout webView;
     private WebView configView;
@@ -50,7 +50,7 @@ public class WebConfigActivity extends AppCompatActivity {
         configureWebView();
 
         // Load designated web-page
-        String url = getIntent().getStringExtra(EXTRA_WEBPAGE);
+        String url = getIntent().getStringExtra(EXTRA_WEB_PAGE);
         Timber.d("Loading URL=%S", url);
         configView.loadUrl(url);
 

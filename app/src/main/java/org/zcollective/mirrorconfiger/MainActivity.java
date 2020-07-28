@@ -249,7 +249,7 @@ public class MainActivity extends AppCompatActivity implements DeviceAdapter.OnD
 //                    }
 //
 //                    Intent intent = new Intent(QrScannerActivity.this, WebConfigActivity.class);
-//                    intent.putExtra(WebConfigActivity.EXTRA_WEBPAGE, BuildConfig.MIRROR_SETUP_PAGE);
+//                    intent.putExtra(WebConfigActivity.EXTRA_WEB_PAGE, BuildConfig.MIRROR_SETUP_PAGE);
 //
 //                    runOnUiThread(() -> {
 //                        Log.wtf(TAG, "Starting Webview!");
