@@ -34,9 +34,10 @@ public class WebConfigActivity extends AppCompatActivity {
         setSupportActionBar(toolbar);
 
         if (getSupportActionBar() != null) {
-            Timber.d("SupportActionBar was null");
-            getSupportActionBar().setDisplayHomeAsUpEnabled(true);
             getSupportActionBar().setDisplayShowHomeEnabled(true);
+            getSupportActionBar().setDisplayHomeAsUpEnabled(true);
+        } else {
+            Timber.d("SupportActionBar was null");
         }
 
         webView = findViewById(R.id.webview);
