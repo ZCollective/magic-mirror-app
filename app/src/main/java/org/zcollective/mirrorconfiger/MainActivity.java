@@ -139,7 +139,11 @@ public class MainActivity extends AppCompatActivity implements DeviceAdapter.OnD
                     Timber.tag(RX_TAG).d(String.format("Cancel chain. Main Thread? %B",
                             Looper.myLooper() == Looper.getMainLooper()));
                     // Wrapping just to be sure, otherwise we might crash!
-                    runOnUiThread(() -> deviceAdapter.clearAll());
+                    runOnUiThread(() -> {
+                        if (deviceAdapter != null) {
+                            deviceAdapter.clearAll();
+                        }
+                    });
                 }).subscribe(this::handleServiceEvent,
                         throwable -> Timber.tag(RX_TAG).e(throwable, "error"));
     }
